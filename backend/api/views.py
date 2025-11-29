@@ -43,7 +43,7 @@ def ensure_user_profile(uid):
 def get_display_name_or_default(uid):
     try:
         fb_user = auth.get_user(uid)
-        return fb_user.display_name or "User"
+        return fb_user.displayName   or "User"
     except Exception:
         return "User"
 
@@ -399,9 +399,8 @@ def activities_by_tags_all(request):
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
-
 # ============================================================
-# User Tags (UPDATED)
+# User Tags (UPDATED – UID from URL, no auth)
 # ============================================================
 
 @csrf_exempt
@@ -413,11 +412,12 @@ def user_add_tag(request, uid, tag):
         db.collection("users").document(uid).update({
             "tags": firestore.ArrayUnion([tag])
         })
-        return JsonResponse({"status": "tag_added", "tag": tag})
+        return JsonResponse({"status": "tag_added", "uid": uid, "tag": tag})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
 
+@csrf_exempt
 def user_add_tags(request, uid, tags):
     if request.method != "POST":
         return JsonResponse({"error": "Only POST allowed"}, status=405)
@@ -431,11 +431,13 @@ def user_add_tags(request, uid, tags):
     if not user_doc.exists:
         return JsonResponse({"error": "User not found"}, status=404)
 
-    user_ref.update({
-        "tags": firestore.ArrayUnion(tag_list)
-    })
-
-    return JsonResponse({"status": "tags_added", "tags": tag_list})
+    try:
+        user_ref.update({
+            "tags": firestore.ArrayUnion(tag_list)
+        })
+        return JsonResponse({"status": "tags_added", "uid": uid, "tags": tag_list})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
 
 
 @csrf_exempt
@@ -447,11 +449,9 @@ def user_remove_tag(request, uid, tag):
         db.collection("users").document(uid).update({
             "tags": firestore.ArrayRemove([tag])
         })
-        return JsonResponse({"status": "tag_removed", "tag": tag})
+        return JsonResponse({"status": "tag_removed", "uid": uid, "tag": tag})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
-
-
 # ============================================================
 # Test Firestore
 # ============================================================
