@@ -23,6 +23,7 @@ from api.views import (
     user_add_tag,
     user_add_tags,
     user_remove_tag,
+    get_activities_by_user,
 )
 
 urlpatterns = [
@@ -34,6 +35,7 @@ urlpatterns = [
     path("api/sync/", sync_offline_activity),
     path("api/feed/", get_feed),
     path("api/test-firestore/", test_firestore),
+    path("api/activities/<str:uid>/", views.get_activities_by_user),
 
     # Likes
     path("api/activity/<str:activity_id>/like/", like_activity),

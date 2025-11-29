@@ -84,6 +84,40 @@ def sync_offline_activity(request):
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+    
+@csrf_exempt
+def get_activities_by_user(request, uid):
+    try:
+        # Query all activities where the user is a participant
+        activities = (
+            db.collection("activities")
+            .where("participants", "array_contains", uid)
+            .order_by("timestamp", direction=firestore.Query.DESCENDING)
+            .stream()
+        )
+
+        result = []
+        for doc in activities:
+            data = doc.to_dict()
+            ts = data.get("timestamp")
+            ts = ts.isoformat() if ts else None
+
+            result.append({
+                "id": doc.id,
+                "type": data.get("type"),
+                "participants": data.get("participants", []),
+                "location": data.get("location", {}),
+                "comment": data.get("user_comment", ""),
+                "tags": data.get("tags", []),
+                "likes": data.get("likes", []),
+                "timestamp": ts,
+            })
+
+        return JsonResponse({"activities": result}, safe=False)
+
+    except Exception as e:
+        print("[ERROR get_activities_by_user]", e)
+        return JsonResponse({"error": str(e)}, status=500)
 
 
 # ============================================================
