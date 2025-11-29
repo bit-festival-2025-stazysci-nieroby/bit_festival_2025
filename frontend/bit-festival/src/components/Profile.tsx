@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { doc, getDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, serverTimestamp, collection, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { MapPin, Calendar, Tag, Edit3, Loader2, UserPlus, Check, UserMinus } from 'lucide-react';
 
@@ -20,12 +20,16 @@ const Profile = ({ targetUid }: ProfileProps) => {
   const [profile, setProfile] = useState<UserProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   
+  // Stany followersów
   const [isFollowing, setIsFollowing] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
+  const [followersCount, setFollowersCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
   
   const isOwnProfile = !targetUid || (auth.currentUser && targetUid === auth.currentUser.uid);
   const uidToFetch = targetUid || auth.currentUser?.uid;
 
+  // 1. Pobieranie danych profilu
   useEffect(() => {
     const fetchProfile = async () => {
       if (!uidToFetch) return;
@@ -59,20 +63,42 @@ const Profile = ({ targetUid }: ProfileProps) => {
     fetchProfile();
   }, [uidToFetch, isOwnProfile]);
 
+  // 2. Sprawdzanie czy obserwujemy (TERAZ AUTOMATYCZNIE ODŚWIEŻANE)
   useEffect(() => {
-    const checkFollowStatus = async () => {
-        if (!auth.currentUser || !uidToFetch || isOwnProfile) return;
-        
-        try {
-            const followDoc = await getDoc(doc(db, "users", auth.currentUser.uid, "following", uidToFetch));
-            setIsFollowing(followDoc.exists());
-        } catch (error) {
-            console.error("Error checking follow status:", error);
-        }
-    };
+    if (!auth.currentUser || !uidToFetch || isOwnProfile) return;
 
-    checkFollowStatus();
+    // Używamy onSnapshot, aby status przycisku aktualizował się w czasie rzeczywistym
+    const unsubscribe = onSnapshot(doc(db, "users", auth.currentUser.uid, "following", uidToFetch), 
+      (docSnap) => {
+        setIsFollowing(docSnap.exists());
+      },
+      (error) => {
+        console.error("Error checking follow status:", error);
+      }
+    );
+
+    return () => unsubscribe();
   }, [uidToFetch, isOwnProfile]);
+
+  // 3. Liczniki Followers/Following (Real-time)
+  useEffect(() => {
+    if (!uidToFetch) return;
+
+    // Nasłuchuj kolekcji 'followers' tego użytkownika
+    const followersUnsub = onSnapshot(collection(db, "users", uidToFetch, "followers"), (snap) => {
+        setFollowersCount(snap.size);
+    });
+
+    // Nasłuchuj kolekcji 'following' tego użytkownika
+    const followingUnsub = onSnapshot(collection(db, "users", uidToFetch, "following"), (snap) => {
+        setFollowingCount(snap.size);
+    });
+
+    return () => {
+        followersUnsub();
+        followingUnsub();
+    };
+  }, [uidToFetch]);
 
   const handleToggleFollow = async () => {
       if (!auth.currentUser || !uidToFetch) return;
@@ -83,17 +109,19 @@ const Profile = ({ targetUid }: ProfileProps) => {
 
       try {
           if (isFollowing) {
+              // UNFOLLOW
               await deleteDoc(doc(db, "users", myId, "following", targetId));
               await deleteDoc(doc(db, "users", targetId, "followers", myId));
-              setIsFollowing(false);
+              // Stan isFollowing zaktualizuje się sam dzięki onSnapshot w useEffect
           } else {
+              // FOLLOW
               await setDoc(doc(db, "users", myId, "following", targetId), { timestamp: serverTimestamp() });
               await setDoc(doc(db, "users", targetId, "followers", myId), { timestamp: serverTimestamp() });
-              setIsFollowing(true);
+              // Stan isFollowing zaktualizuje się sam dzięki onSnapshot w useEffect
           }
       } catch (error) {
           console.error("Error toggling follow:", error);
-          alert("Could not update follow status.");
+          alert("Update Security Rules in Firebase Console to allow following!");
       } finally {
           setFollowLoading(false);
       }
@@ -115,7 +143,7 @@ const Profile = ({ targetUid }: ProfileProps) => {
         <div className={`h-32 bg-gradient-to-r ${isOwnProfile ? 'from-teal-400 to-blue-500' : 'from-orange-400 to-pink-500'}`}></div>
 
         <div className="px-8 pb-8">
-          <div className="relative flex justify-between items-end -mt-12 mb-6">
+          <div className="relative flex justify-between items-end -mt-12 mb-4">
             <img 
               src={profile.photoURL || `https://ui-avatars.com/api/?name=${profile.displayName}`} 
               alt={profile.displayName} 
@@ -157,7 +185,19 @@ const Profile = ({ targetUid }: ProfileProps) => {
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{profile.displayName}</h1>
             <p className="text-gray-500 mb-4 dark:text-gray-400">{isOwnProfile ? profile.email : `@${profile.displayName.toLowerCase().replace(/\s/g, '')}`}</p>
 
-            <div className="flex flex-wrap gap-4 text-sm text-gray-500 mb-6 dark:text-gray-400">
+            {/* Stats Row */}
+            <div className="flex gap-6 mb-6 border-y border-gray-100 py-4 dark:border-gray-700">
+                <div className="flex items-center gap-2">
+                    <span className="font-bold text-gray-900 dark:text-white text-lg">{followersCount}</span>
+                    <span className="text-gray-500 text-sm dark:text-gray-400">Followers</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="font-bold text-gray-900 dark:text-white text-lg">{followingCount}</span>
+                    <span className="text-gray-500 text-sm dark:text-gray-400">Following</span>
+                </div>
+            </div>
+
+            <div className="flex flex-wrap gap-4 text-sm text-gray-500 mb-2 dark:text-gray-400">
               <div className="flex items-center gap-1">
                 <MapPin size={16} />
                 {profile.location || "Earth"}

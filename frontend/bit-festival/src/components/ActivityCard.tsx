@@ -26,6 +26,7 @@ import type { ActivityPost } from '../types';
 interface ActivityCardProps {
   post: ActivityPost;
   onUserClick?: (uid: string) => void;
+  onActivityClick?: (activityId: string) => void; // NOWY PROP
 }
 
 interface Comment {
@@ -36,7 +37,7 @@ interface Comment {
   timestamp: any;
 }
 
-const ActivityCard = ({ post, onUserClick = () => {} }: ActivityCardProps) => {
+const ActivityCard = ({ post, onUserClick = () => {}, onActivityClick = () => {} }: ActivityCardProps) => {
   const [isLiked, setIsLiked] = useState(post.social.userLiked || false);
   const [likesCount, setLikesCount] = useState(post.social.likes);
   const [commentsCount, setCommentsCount] = useState(post.social.comments);
@@ -128,18 +129,19 @@ const ActivityCard = ({ post, onUserClick = () => {} }: ActivityCardProps) => {
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6 transition-all hover:shadow-md dark:bg-gray-800 dark:border-gray-700">
+      {/* Header */}
       <div className="p-4 flex justify-between items-start">
         <div className="flex gap-3">
           <img 
             src={post.user.avatar} 
             alt={post.user.name} 
-            onClick={() => onUserClick && onUserClick(post.user.id || 'unknown')}
+            onClick={(e) => { e.stopPropagation(); onUserClick && onUserClick(post.user.id || 'unknown'); }}
             className="w-10 h-10 rounded-full object-cover border border-gray-200 cursor-pointer hover:opacity-80 transition-opacity"
           />
           <div>
             <div className="flex items-center gap-2">
               <h3 
-                onClick={() => onUserClick && onUserClick(post.user.id || 'unknown')}
+                onClick={(e) => { e.stopPropagation(); onUserClick && onUserClick(post.user.id || 'unknown'); }}
                 className="font-semibold text-gray-900 cursor-pointer hover:underline dark:text-gray-100"
               >
                 {post.user.name}
@@ -161,32 +163,39 @@ const ActivityCard = ({ post, onUserClick = () => {} }: ActivityCardProps) => {
         </button>
       </div>
 
+      {/* KLIKALNY OBSZAR ZDJĘCIA */}
       {post.image && (
-        <div className="bg-gray-100 w-full h-64 md:h-96 flex items-center justify-center text-gray-400 relative overflow-hidden group">
+        <div 
+            onClick={() => onActivityClick && onActivityClick(post.id)}
+            className="bg-gray-100 w-full h-64 md:h-96 flex items-center justify-center text-gray-400 relative overflow-hidden group cursor-pointer"
+        >
            <img src={post.image} alt="Activity" className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
         </div>
       )}
 
+      {/* KLIKALNY OBSZAR TREŚCI */}
       <div className="p-5">
-        <h2 className="text-lg font-bold text-gray-900 mb-2 dark:text-white">{post.title}</h2>
-        <p className="text-gray-600 text-sm mb-4 leading-relaxed dark:text-gray-300">{post.description}</p>
+        <div onClick={() => onActivityClick && onActivityClick(post.id)} className="cursor-pointer">
+            <h2 className="text-lg font-bold text-gray-900 mb-2 dark:text-white hover:text-teal-600 transition-colors">{post.title}</h2>
+            <p className="text-gray-600 text-sm mb-4 leading-relaxed dark:text-gray-300">{post.description}</p>
 
-        {post.stats && (
-          <div className="bg-gray-50 rounded-lg p-4 mb-4 dark:bg-gray-700">
-             <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                   <Clock size={16} className="text-gray-400"/> 
-                   <span className="text-sm text-gray-500 dark:text-gray-400">Duration:</span>
-                   <span className="font-bold text-gray-800 dark:text-gray-200">{post.stats.duration}</span>
+            {post.stats && (
+            <div className="bg-gray-50 rounded-lg p-4 mb-4 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors">
+                <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                    <Clock size={16} className="text-gray-400"/> 
+                    <span className="text-sm text-gray-500 dark:text-gray-400">Duration:</span>
+                    <span className="font-bold text-gray-800 dark:text-gray-200">{post.stats.duration}</span>
+                    </div>
+                    {post.stats.calories && post.stats.calories !== '-' && (
+                    <div className="text-sm font-medium text-teal-600 dark:text-teal-400">
+                        {post.stats.calories}
+                    </div>
+                    )}
                 </div>
-                {post.stats.calories && post.stats.calories !== '-' && (
-                  <div className="text-sm font-medium text-teal-600 dark:text-teal-400">
-                     {post.stats.calories}
-                  </div>
-                )}
-             </div>
-          </div>
-        )}
+            </div>
+            )}
+        </div>
         
         <hr className="border-gray-100 mb-4 dark:border-gray-700" />
 

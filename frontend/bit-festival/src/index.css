@@ -1,5 +1,39 @@
 @import "tailwindcss";
+@variant dark (&:where(.dark, .dark *));
 
 html, body {
   background-color: #f9fafb;
+}
+.dark body {
+  background-color: #111827; 
+  color: #f3f4f6; 
+}
+
+.high-contrast {
+  filter: contrast(125%);
+}
+.high-contrast .bg-white, 
+.high-contrast .bg-gray-50, 
+.high-contrast .dark\:bg-gray-800, 
+.high-contrast .dark\:bg-gray-900 { 
+  background-color: #000000 !important; 
+}
+.high-contrast, 
+.high-contrast h1, 
+.high-contrast h2, 
+.high-contrast h3, 
+.high-contrast p, 
+.high-contrast span, 
+.high-contrast div, 
+.high-contrast button, 
+.high-contrast input { 
+  color: #FFFF00 !important; 
+  border-color: #FFFF00 !important;
+}
+.high-contrast button { 
+  border-width: 2px !important; 
+  font-weight: bold !important; 
+}
+.high-contrast img { 
+  filter: grayscale(100%) contrast(200%); 
 }
