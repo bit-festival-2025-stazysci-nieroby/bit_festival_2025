@@ -5,21 +5,7 @@ from firebase_admin import credentials, firestore, auth
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
-
-# -------------------------
-# FIREBASE INITIALIZATION
-# -------------------------
-if not firebase_admin._apps:
-    cred_path = os.path.join(settings.BASE_DIR, 'serviceAccountKey.json')
-
-    if os.path.exists(cred_path):
-        cred = credentials.Certificate(cred_path)
-        firebase_admin.initialize_app(cred)
-    else:
-        print(f"[WARN] Firebase service account missing: {cred_path}")
-
-db = firestore.client()
-
+from api import db
 
 # -------------------------
 # 1. SYNC OFFLINE ACTIVITY
