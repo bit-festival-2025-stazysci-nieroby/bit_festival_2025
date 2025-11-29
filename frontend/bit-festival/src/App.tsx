@@ -1,35 +1,39 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { MoreHorizontal } from 'lucide-react';
+import Sidebar from './components/Sidebar';
+import ActivityCard from './components/ActivityCard';
+import { mockPosts } from './lib/mockdata';
+import './index.css'
 
 function App() {
-  const [count, setCount] = useState(0)
-
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    <div className="flex min-h-screen bg-gray-50 font-sans">
+      <Sidebar />
+      <main className="flex-1 md:ml-64 p-4 md:p-8">
+        <div className="max-w-2xl mx-auto">
+          {/* Mobile Header (tylko na telefonach) */}
+          <div className="md:hidden flex items-center justify-between mb-6">
+            <h1 className="text-xl font-bold text-gray-800">
+              Active<span className="text-teal-500">Connect</span>
+            </h1>
+            <button className="p-2 text-gray-600">
+              <MoreHorizontal size={24} />
+            </button>
+          </div>
+
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-gray-900">Activity Feed</h1>
+            <p className="text-gray-500 mt-1">See what your friends are up to</p>
+          </div>
+          
+          <div className="space-y-6">
+            {mockPosts.map((post) => (
+              <ActivityCard key={post.id} post={post} />
+            ))}
+          </div>
+        </div>
+      </main>
+    </div>
+  );
 }
 
-export default App
+export default App;
