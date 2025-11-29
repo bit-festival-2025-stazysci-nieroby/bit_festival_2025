@@ -12,6 +12,7 @@ import android.hardware.SensorManager
 import android.location.Geocoder
 import android.location.Location
 import com.google.firebase.firestore.Query
+import androidx.compose.foundation.rememberScrollState
 import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
@@ -39,6 +40,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.ActivityCompat
+import com.google.firebase.Timestamp
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
@@ -119,6 +122,22 @@ data class ActivityStats(
     val distance: String,
     val pace: String,
     val calories: String
+)
+
+val AVAILABLE_TAGS = listOf(
+    "gym", "running", "cycling",
+    "walking", "hiking", "swimming", "basketball", "football",
+    "volleyball", "tennis", "padel", "badminton", "climbing",
+    "yoga", "boxing",
+    "dance", "skating", "skiing", "snowboarding",
+    "shopping", "nightlife", "concert", "photography",
+    "events", "coffee", "lunch", "tea",
+    "study",
+    "reading", "coding",
+    "music", "gaming", "boardgames", "crafting", "painting", "drawing",
+    "writing", "gardening", "learning", "volunteering",
+    "outdoor", "picnic", "sightseeing", "birdwatching",
+    "meditation"
 )
 
 @SuppressLint("MissingPermission")
@@ -356,7 +375,7 @@ fun MainApp(
                 }
             }
             composable("feed") { FeedScreen(db) }
-            composable("proximity") { ProximityScreen() }
+            composable("proximity") { ProximityScreen(auth, db) }
             composable("profile") { ProfileScreen(auth, db, navController) }
         }
     }
@@ -821,50 +840,159 @@ fun OsmMapView() {
     AndroidView(factory = { MapView(it).apply { setTileSource(TileSourceFactory.MAPNIK); controller.setZoom(15.0); controller.setCenter(GeoPoint(50.0, 19.0)) } }, modifier = Modifier.fillMaxSize())
 }
 
-// --- SCREEN: PROXIMITY (UPDATED WITH COMPASS & STATUS FIX) ---
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ProximityScreen() {
+fun LobbyScreen(
+    myLocation: Location,
+    onActivityPosted: () -> Unit,
+    onCancel: () -> Unit
+) {
+    val auth = com.google.firebase.ktx.Firebase.auth
+    val db = com.google.firebase.ktx.Firebase.firestore
+
+    var description by remember { mutableStateOf("") }
+    val selectedTags = remember { mutableStateListOf<String>() }
+    var isPosting by remember { mutableStateOf(false) }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(Color.White)
+            .padding(24.dp)
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF4CAF50), modifier = Modifier.size(80.dp))
+        Spacer(Modifier.height(16.dp))
+        Text("Match Successful!", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color(0xFF4CAF50))
+        Text("Create an activity for this session.", color = Color.Gray)
+
+        Spacer(Modifier.height(32.dp))
+
+        OutlinedTextField(
+            value = description,
+            onValueChange = { description = it },
+            label = { Text("What are you doing?") },
+            modifier = Modifier.fillMaxWidth(),
+            maxLines = 3
+        )
+
+        Spacer(Modifier.height(24.dp))
+
+        Text("Select Tags", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Start))
+        Spacer(Modifier.height(8.dp))
+
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            AVAILABLE_TAGS.forEach { tag ->
+                val isSelected = selectedTags.contains(tag)
+                FilterChip(
+                    selected = isSelected,
+                    onClick = { if (isSelected) selectedTags.remove(tag) else selectedTags.add(tag) },
+                    label = { Text(tag) },
+                    leadingIcon = if (isSelected) { { Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp)) } } else null,
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = BrandOrange.copy(alpha = 0.2f),
+                        selectedLabelColor = BrandOrange
+                    )
+                )
+            }
+        }
+
+        Spacer(Modifier.height(48.dp))
+
+        if (isPosting) {
+            CircularProgressIndicator(color = BrandOrange)
+        } else {
+            Button(
+                onClick = {
+                    if (selectedTags.isNotEmpty()) {
+                        isPosting = true
+                        val activityData = hashMapOf(
+                            "description" to description,
+                            "tags" to selectedTags,
+                            "type" to selectedTags.first().replaceFirstChar { it.uppercase() },
+                            "location" to mapOf("lat" to myLocation.latitude, "lng" to myLocation.longitude),
+                            "participants" to listOf(auth.currentUser?.displayName ?: "User"),
+                            "time_start" to com.google.firebase.Timestamp.now()
+                        )
+
+                        db.collection("activities").add(activityData)
+                            .addOnSuccessListener {
+                                onActivityPosted()
+                            }
+                            .addOnFailureListener { e ->
+                                isPosting = false
+                                Log.e("Lobby", "Error posting", e)
+                            }
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Post Activity", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            TextButton(onClick = onCancel) {
+                Text("Cancel", color = Color.Gray)
+            }
+        }
+    }
+}
+
+// --- SCREEN: PROXIMITY ---
+@Composable
+fun ProximityScreen(auth: FirebaseAuth, db: FirebaseFirestore) {
     var isSearching by remember { mutableStateOf(false) }
     var connectionStatus by remember { mutableStateOf("Ready to connect") }
-    var hasMet by remember { mutableStateOf(false) }
 
-    // Connection & Location State
+    // States
+    var hasMet by remember { mutableStateOf(false) }
+    var showLobby by remember { mutableStateOf(false) }
+
     var connectedEndpointId by remember { mutableStateOf<String?>(null) }
     var myLocation by remember { mutableStateOf<Location?>(null) }
     var friendLocation by remember { mutableStateOf<Location?>(null) }
 
-    // Compass State
     var myAzimuth by remember { mutableFloatStateOf(0f) }
     var targetBearing by remember { mutableStateOf<Float?>(null) }
     var targetDistance by remember { mutableStateOf<Float?>(null) }
 
     val context = LocalContext.current
 
-    // 1. Listen to Compass
+    // 1. Compass
     CompassEffect { azimuth -> myAzimuth = azimuth }
 
-    // 2. ACTIVE GPS TRACKING (Runs when searching or connected)
-    // This forces the GPS chip to stay ON and update every 500ms
+    // 2. Active GPS
     LocationUpdatesEffect(isActive = isSearching || connectedEndpointId != null) { loc ->
         myLocation = loc
-        // Log.d("ProximityGPS", "My Loc Updated: ${loc.accuracy}m accuracy")
     }
 
-    // 3. CALCULATE BEARING & DISTANCE (Reactive)
-    // Re-runs automatically whenever myLocation OR friendLocation changes
+    // 3. Math & Logic
     LaunchedEffect(myLocation, friendLocation) {
-        if (myLocation != null && friendLocation != null) {
-            val dist = myLocation!!.distanceTo(friendLocation!!)
-            val bear = myLocation!!.bearingTo(friendLocation!!)
+        val loc = myLocation // Capture local reference to prevent null changes
+        val friendLoc = friendLocation
+
+        if (loc != null && friendLoc != null) {
+            val dist = loc.distanceTo(friendLoc)
+            val bear = loc.bearingTo(friendLoc)
 
             targetDistance = dist
             targetBearing = bear
 
-            if (dist < 10.0) { // 10m threshold
+            // 10m Threshold for Success
+            if (dist < 10.0) {
                 hasMet = true
                 connectionStatus = "Success! You found each other!"
             } else {
-                connectionStatus = "Distance: ${dist.roundToInt()}m (Acc: ${myLocation!!.accuracy.roundToInt()}m)"
+                // Fixed String Formatting to avoid Crash
+                val acc = loc.accuracy.roundToInt()
+                connectionStatus = "Distance: ${dist.roundToInt()}m (GPS Error: ±${acc}m)"
             }
         }
     }
@@ -874,9 +1002,9 @@ fun ProximityScreen() {
             context = context,
             onStatusUpdate = { status -> connectionStatus = status },
             onLocationReceived = { lat, lng ->
-                // Just update the state, the LaunchedEffect above handles the math
-                val friendLoc = Location("friend").apply { latitude = lat; longitude = lng }
-                friendLocation = friendLoc
+                // Friend sent their location
+                val fLoc = Location("friend").apply { latitude = lat; longitude = lng }
+                friendLocation = fLoc
             },
             onConnected = { endpointId ->
                 connectedEndpointId = endpointId
@@ -884,23 +1012,16 @@ fun ProximityScreen() {
         )
     }
 
-    // 4. DATA SYNC LOOP (Sends MY location every 500ms)
+    // 4. Loop: Send my location to friend
     LaunchedEffect(connectedEndpointId, myLocation) {
-        if (connectedEndpointId != null && myLocation != null) {
+        val loc = myLocation
+        if (connectedEndpointId != null && loc != null) {
             while(true) {
-                // Only send if accuracy is decent (<30m) to avoid jumping, or send anyway if it's all we have
-                nearbyManager.sendLocation(myLocation!!.latitude, myLocation!!.longitude, connectedEndpointId!!)
-                delay(500) // Fast updates for smooth compass
+                nearbyManager.sendLocation(loc.latitude, loc.longitude, connectedEndpointId!!)
+                delay(500) // Update every 500ms
             }
         }
     }
-
-    // Animation
-    val rotation by animateFloatAsState(
-        targetValue = if (targetBearing != null) (targetBearing!! - myAzimuth).let { if (it < 0) it + 360 else it } else 0f,
-        animationSpec = tween(durationMillis = 300),
-        label = "Compass"
-    )
 
     DisposableEffect(Unit) { onDispose { nearbyManager.stopAll() } }
 
@@ -917,42 +1038,159 @@ fun ProximityScreen() {
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { perms ->
         if (perms.values.all { it }) {
-            if (!isLocationEnabled(context)) context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
-            else { isSearching = true; connectionStatus = "Starting..."; nearbyManager.startAdvertising("User-${(1000..9999).random()}"); nearbyManager.startDiscovery() }
+            if (!isLocationEnabled(context)) {
+                context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            } else {
+                isSearching = true
+                connectionStatus = "Starting..."
+                val randomUser = "User-${(1000..9999).random()}"
+                nearbyManager.startAdvertising(randomUser)
+                nearbyManager.startDiscovery()
+            }
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        if (hasMet) {
+    // Animation
+    val rotation by animateFloatAsState(
+        targetValue = if (targetBearing != null) (targetBearing!! - myAzimuth).let { if (it < 0) it + 360 else it } else 0f,
+        animationSpec = tween(300),
+        label = "Compass"
+    )
+
+    // --- UI RENDERING ---
+
+    if (showLobby && myLocation != null) {
+        // 3. LOBBY SCREEN (Uses captured non-null location)
+        LobbyScreen(
+            myLocation = myLocation!!,
+            onActivityPosted = {
+                // Reset all
+                showLobby = false
+                hasMet = false
+                isSearching = false
+                connectedEndpointId = null
+                targetBearing = null
+                targetDistance = null
+                nearbyManager.stopAll()
+                connectionStatus = "Ready to connect"
+            },
+            onCancel = {
+                showLobby = false
+            }
+        )
+    } else if (hasMet) {
+        // 2. SUCCESS SCREEN
+        Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(120.dp), tint = Color(0xFF4CAF50))
             Spacer(Modifier.height(24.dp))
             Text("You Matched!", style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.Bold, color = Color(0xFF4CAF50))
             Text("You are within 10 meters.", color = Color.Gray)
+
             Spacer(Modifier.height(48.dp))
-            Button(onClick = { hasMet = false; isSearching = false; targetBearing = null; targetDistance = null; connectedEndpointId = null; nearbyManager.stopAll(); connectionStatus = "Ready" }, colors = ButtonDefaults.buttonColors(containerColor = BrandOrange), modifier = Modifier.fillMaxWidth().height(56.dp)) { Text("Close") }
-        } else {
+
+            // Button to Create Activity (Go to Lobby)
+            Button(
+                onClick = { showLobby = true },
+                colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Create Activity", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Button to just Close
+            OutlinedButton(
+                onClick = {
+                    hasMet = false
+                    isSearching = false
+                    connectedEndpointId = null
+                    targetBearing = null
+                    targetDistance = null
+                    nearbyManager.stopAll()
+                    connectionStatus = "Ready to connect"
+                },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, BrandOrange),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandOrange)
+            ) {
+                Text("Close", fontSize = 18.sp)
+            }
+        }
+    } else {
+        // 1. RADAR / COMPASS SCREEN
+        Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Box(contentAlignment = Alignment.Center) {
                 if (isSearching && targetBearing == null) {
                     CircularProgressIndicator(modifier = Modifier.size(200.dp), color = BrandOrange.copy(alpha = 0.3f), strokeWidth = 8.dp)
                     Icon(Icons.Default.Radar, null, modifier = Modifier.size(80.dp), tint = BrandOrange)
-                } else if (targetBearing != null) {
+                }
+                else if (targetBearing != null) {
                     Icon(Icons.Default.Navigation, null, modifier = Modifier.size(200.dp).rotate(rotation), tint = BrandOrange)
-                    // Show Distance AND Accuracy
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.align(Alignment.BottomCenter).offset(y = 80.dp)) {
-                        Text("${targetDistance?.roundToInt()}m", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-                        Text("GPS Acc: ±${myLocation?.accuracy?.roundToInt()}m", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                    }
-                } else {
+                    Text(
+                        "${targetDistance?.roundToInt()}m",
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.align(Alignment.BottomCenter).offset(y = 80.dp)
+                    )
+                }
+                else {
                     Icon(Icons.Default.Radar, null, modifier = Modifier.size(80.dp), tint = Color.Gray)
                 }
             }
+
             Spacer(Modifier.height(100.dp))
-            Text(text = if(targetDistance != null) "Tracking..." else connectionStatus, textAlign = TextAlign.Center, color = BrandOrange, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 32.dp))
+
+            Text(
+                text = if(targetDistance != null) "Tracking..." else connectionStatus,
+                textAlign = TextAlign.Center,
+                color = BrandOrange,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 32.dp)
+            )
 
             if (!isSearching && targetBearing == null) {
-                Button(onClick = { if (hasRequiredPermissions(context)) { if (!isLocationEnabled(context)) context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) else { isSearching = true; connectionStatus = "Starting..."; nearbyManager.startAdvertising("User-${(1000..9999).random()}"); nearbyManager.startDiscovery() } } else launcher.launch(permissionsToRequest) }, colors = ButtonDefaults.buttonColors(containerColor = BrandOrange), modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(12.dp)) { Text("Connect") }
+                Button(
+                    onClick = {
+                        if (hasRequiredPermissions(context)) {
+                            if (!isLocationEnabled(context)) {
+                                context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                            } else {
+                                isSearching = true
+                                connectionStatus = "Starting..."
+                                // Random user ID to avoid collision in logic
+                                val randomUser = "User-${(1000..9999).random()}"
+                                nearbyManager.startAdvertising(randomUser)
+                                nearbyManager.startDiscovery()
+                            }
+                        } else {
+                            launcher.launch(permissionsToRequest)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Connect", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                }
             } else {
-                OutlinedButton(onClick = { isSearching = false; connectedEndpointId = null; nearbyManager.stopAll() }, modifier = Modifier.fillMaxWidth().height(56.dp), border = BorderStroke(1.dp, BrandOrange), colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandOrange)) { Text("Cancel") }
+                OutlinedButton(
+                    onClick = {
+                        isSearching = false
+                        targetBearing = null // FIXED: Reset compass state
+                        targetDistance = null // FIXED: Reset distance state
+                        connectedEndpointId = null
+                        nearbyManager.stopAll()
+                        connectionStatus = "Ready to connect" // Reset text
+                    },
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    border = BorderStroke(1.dp, BrandOrange),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandOrange)
+                ) {
+                    Text("Cancel", fontSize = 18.sp)
+                }
             }
         }
     }
