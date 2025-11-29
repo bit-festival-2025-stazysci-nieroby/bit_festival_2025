@@ -421,10 +421,7 @@ def user_add_tag(request, uid, tag):
 def user_add_tags(request, uid, tags):
     if request.method != "POST":
         return JsonResponse({"error": "Only POST allowed"}, status=405)
-
-    # tags = "fitness,outdoor,coffee"
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-
     user_ref = db.collection("users").document(uid)
     user_doc = user_ref.get()
 
