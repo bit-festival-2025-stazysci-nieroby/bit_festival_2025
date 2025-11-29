@@ -4,63 +4,114 @@ import random
 
 db = firestore.client()
 
+
 class Command(BaseCommand):
-    help = "Insert sample activity data into Firestore with likes and comments"
+    help = "Insert sample activities + users + likes + comments for the new schema"
 
     def handle(self, *args, **kwargs):
 
-        sample_items = [
-            {
-                "participants": ["userA", "userB"],
-                "type": "walk",
-                "timestamp": firestore.SERVER_TIMESTAMP,
-                "location": {"lat": 52.2297, "lng": 21.0122},
-                "tags": ["outdoor", "fitness"],
-                "user_comment": "Morning walk in Warsaw",
-            },
-            {
-                "participants": ["userC"],
-                "type": "coffee",
-                "timestamp": firestore.SERVER_TIMESTAMP,
-                "location": {"lat": 52.4064, "lng": 16.9252},
-                "tags": ["cafe"],
-                "user_comment": "Coffee in Poznań",
-            },
+        # ============================================================
+        # 1️⃣ USERS — Create fake users
+        # ============================================================
+
+        fake_users = [
+            {"uid": "alice", "display_name": "Alice Doe", "city": "Warsaw"},
+            {"uid": "bob", "display_name": "Bob Green", "city": "Kraków"},
+            {"uid": "charlie", "display_name": "Charlie Red", "city": "Gdańsk"},
+            {"uid": "david", "display_name": "David Black", "city": "Wrocław"},
+            {"uid": "eve", "display_name": "Eve White", "city": "Poznań"},
         ]
 
-        fake_users = ["alice", "bob", "charlie", "david", "eve"]
+        example_tags = ["fitness", "outdoor", "coffee", "friends", "study", "gym", "run"]
 
-        for item in sample_items:
-            # create activity
-            activity_doc = db.collection("activities").document()
-            activity_doc.set(item)
-            activity_id = activity_doc.id
+        for u in fake_users:
+            db.collection("users").document(u["uid"]).set({
+                "uid": u["uid"],
+                "display_name": u["display_name"],
+                "city": u["city"],
+                "tags": random.sample(example_tags, random.randint(1, 3)),
+                "description": f"Hi, I'm {u['display_name']}",
+                "created_at": firestore.SERVER_TIMESTAMP,
+            })
 
-            # ----- ADD LIKES -----
-            number_of_likes = random.randint(0, 3)
-            like_users = random.sample(fake_users, number_of_likes)
+        self.stdout.write(self.style.SUCCESS("Fake users added!"))
 
-            for user in like_users:
-                like_ref = activity_doc.collection("likes").document(user)
-                like_ref.set({
-                    "user_id": user,
+        # ============================================================
+        # 2️⃣ ACTIVITIES — Generate sample activities
+        # ============================================================
+
+        sample_activity_templates = [
+            "Morning workout",
+            "Coffee break ☕",
+            "Evening walk",
+            "Studying for exams",
+            "Group hangout",
+            "Running together",
+            "Gym session",
+            "Work & chill",
+        ]
+
+        locations = [
+            {"lat": 52.22, "lng": 21.01},   # Warsaw
+            {"lat": 52.4064, "lng": 16.9252},  # Poznań
+            {"lat": 50.0647, "lng": 19.9450},  # Kraków
+            {"lat": 51.11, "lng": 17.02},      # Wrocław
+            {"lat": 54.3520, "lng": 18.6466},  # Gdańsk
+        ]
+
+        # Generate 12 activities
+        for _ in range(12):
+
+            # random participants (1–3 users)
+            part_count = random.randint(1, 3)
+            participants = random.sample([u["uid"] for u in fake_users], part_count)
+
+            # random tags (1–3 tags)
+            tags = random.sample(example_tags, random.randint(1, 3))
+
+            activity_ref = db.collection("activities").document()
+            activity_ref.set({
+                "participants": participants,
+                "tags": tags,
+                "description": random.choice(sample_activity_templates),
+                "location": random.choice(locations),
+                "timestamp": firestore.SERVER_TIMESTAMP
+            })
+
+            activity_id = activity_ref.id
+
+            # ============================================================
+            # 3️⃣ LIKES
+            # ============================================================
+
+            like_count = random.randint(0, len(fake_users))
+            like_users = random.sample(fake_users, like_count)
+
+            for u in like_users:
+                activity_ref.collection("likes").document(u["uid"]).set({
+                    "user_id": u["uid"],
+                    "user_display_name": u["display_name"],
                     "timestamp": firestore.SERVER_TIMESTAMP
                 })
 
-            # ----- ADD COMMENTS -----
-            number_of_comments = random.randint(0, 3)
-            comment_users = random.sample(fake_users, number_of_comments)
+            # ============================================================
+            # 4️⃣ COMMENTS
+            # ============================================================
 
-            for user in comment_users:
-                comment_ref = activity_doc.collection("comments").document()
-                comment_ref.set({
-                    "user_id": user,
-                    "text": f"This is a test comment from {user}",
+            comment_count = random.randint(0, 5)
+            comment_users = random.sample(fake_users, comment_count)
+
+            for u in comment_users:
+                activity_ref.collection("comments").add({
+                    "user_id": u["uid"],
+                    "user_display_name": u["display_name"],
+                    "text": f"{u['display_name']} says hello!",
                     "timestamp": firestore.SERVER_TIMESTAMP
                 })
 
             self.stdout.write(self.style.SUCCESS(
-                f"Inserted activity {activity_id} with {number_of_likes} likes and {number_of_comments} comments"
+                f"Activity {activity_id}: {len(participants)} participants, "
+                f"{like_count} likes, {comment_count} comments"
             ))
 
-        self.stdout.write(self.style.SUCCESS("All sample data added!"))
+        self.stdout.write(self.style.SUCCESS("Sample data generation complete!"))
