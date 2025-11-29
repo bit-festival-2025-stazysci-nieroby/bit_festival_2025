@@ -4,7 +4,7 @@ import type { User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 
 import { auth, db } from './lib/firebase';
-import { MoreHorizontal, Loader2, AlertCircle, Moon, Sun, Eye, Monitor } from 'lucide-react';
+import { MoreHorizontal, Loader2, AlertCircle, Moon, Sun, Eye, Monitor, Type } from 'lucide-react';
 
 import Sidebar from './components/Sidebar';
 import ActivityCard from './components/ActivityCard';
@@ -38,11 +38,13 @@ function App() {
 
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
   const [isHighContrast, setIsHighContrast] = useState(() => localStorage.getItem('contrast') === 'true');
+  const [isLargeText, setIsLargeText] = useState(() => localStorage.getItem('largeText') === 'true');
 
   useEffect(() => {
     localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
     localStorage.setItem('contrast', String(isHighContrast));
-  }, [isDarkMode, isHighContrast]);
+    localStorage.setItem('largeText', String(isLargeText));
+  }, [isDarkMode, isHighContrast, isLargeText]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -200,6 +202,31 @@ function App() {
   return (
     <div className={`flex min-h-screen font-sans transition-colors duration-200 ${isDarkMode ? 'dark' : ''} ${isHighContrast ? 'high-contrast' : ''}`}>
       
+      {/* STYLE GLOBALNE I OVERRIDES */}
+      <style>{`
+        /* SKALOWANIE CZCIONKI */
+        ${isLargeText ? 'html { font-size: 115% !important; }' : ''}
+
+        /* DARK MODE */
+        .dark .bg-white { background-color: #1f2937 !important; color: #f3f4f6 !important; }
+        .dark .bg-gray-50 { background-color: #111827 !important; }
+        .dark .text-gray-900 { color: #f3f4f6 !important; }
+        .dark .text-gray-800 { color: #e5e7eb !important; }
+        .dark .text-gray-600, .dark .text-gray-500 { color: #9ca3af !important; }
+        .dark .border-gray-100, .dark .border-gray-200 { border-color: #374151 !important; }
+        .dark .hover\\:bg-gray-50:hover { background-color: #374151 !important; }
+        .dark input { background-color: #374151 !important; color: white !important; border-color: #4b5563 !important; }
+        
+        /* HIGH CONTRAST */
+        .high-contrast { filter: contrast(120%); }
+        .high-contrast .bg-white, .high-contrast .bg-gray-50 { background-color: #000000 !important; }
+        .high-contrast, .high-contrast h1, .high-contrast h2, .high-contrast h3, .high-contrast p, .high-contrast span, .high-contrast div { color: #FFFF00 !important; }
+        .high-contrast button { border: 2px solid #FFFF00 !important; font-weight: bold !important; }
+        .high-contrast .bg-teal-500, .high-contrast .bg-orange-500, .high-contrast .bg-blue-500 { background-color: #000000 !important; border: 2px solid #FFFF00 !important; color: #FFFF00 !important; }
+        .high-contrast img { filter: grayscale(100%) contrast(200%); }
+        .high-contrast input { background-color: black !important; color: yellow !important; border: 2px solid yellow !important; }
+      `}</style>
+
       {currentView !== 'activity_detail' && (
         <Sidebar 
             currentView={currentView} 
@@ -207,7 +234,7 @@ function App() {
         />
       )}
       
-      <main className={`flex-1 p-4 md:p-8 ${currentView !== 'activity_detail' ? 'md:ml-64' : ''} bg-gray-50 dark:bg-gray-900 min-h-screen`}>
+      <main className={`flex-1 p-4 md:p-8 ${currentView !== 'activity_detail' ? 'md:ml-64' : ''} bg-gray-50 dark:bg-gray-900 min-h-screen transition-all duration-300`}>
         <div className={currentView === 'activity_detail' ? 'w-full' : 'max-w-2xl mx-auto'}>
           
           {currentView !== 'activity_detail' && (
@@ -266,8 +293,7 @@ function App() {
 
           {currentView === 'explore' && <Explore onUserClick={handleUserClick} />}
 
-          {/* TUTAJ ZMIANA: Przekazujemy onUserClick */}
-          {currentView === 'profile' && <Profile targetUid={profileTargetUid} onUserClick={handleUserClick} />}
+          {currentView === 'profile' && <Profile targetUid={profileTargetUid} onUserClick={handleUserClick} onActivityClick={handleActivityClick} />}
 
           {currentView === 'activity_detail' && selectedActivityId && (
              <ActivityDetail 
@@ -292,6 +318,7 @@ function App() {
                   </h2>
                 </div>
                 <div className="p-6 space-y-6">
+                  {/* Dark Mode */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
@@ -306,6 +333,8 @@ function App() {
                       <span className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full shadow-md transform transition-transform duration-300 ${isDarkMode ? 'translate-x-7' : 'translate-x-0'}`} />
                     </button>
                   </div>
+
+                  {/* High Contrast */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className={`p-2 rounded-lg ${isHighContrast ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
@@ -320,6 +349,23 @@ function App() {
                       <span className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full shadow-md transform transition-transform duration-300 ${isHighContrast ? 'translate-x-7' : 'translate-x-0'}`} />
                     </button>
                   </div>
+
+                  {/* Large Text */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-lg ${isLargeText ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
+                        <Type size={24} />
+                      </div>
+                      <div>
+                        <div className="font-medium text-gray-900 dark:text-white">Larger Text</div>
+                        <div className="text-sm text-gray-500 dark:text-gray-400">Increase font size</div>
+                      </div>
+                    </div>
+                    <button onClick={() => setIsLargeText(!isLargeText)} className={`relative w-14 h-7 rounded-full transition-colors duration-300 focus:outline-none ${isLargeText ? 'bg-teal-500' : 'bg-gray-300 dark:bg-gray-600'}`}>
+                      <span className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full shadow-md transform transition-transform duration-300 ${isLargeText ? 'translate-x-7' : 'translate-x-0'}`} />
+                    </button>
+                  </div>
+
                 </div>
               </div>
             </div>
