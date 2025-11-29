@@ -11,11 +11,13 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.location.Geocoder
 import android.location.Location
+import com.google.firebase.firestore.Query
 import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.text.format.DateUtils
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -97,16 +99,18 @@ data class UserProfile(
     val createdAt: Long = 0
 )
 
+
 data class ActivityPost(
-    val id: Int,
+    val id: String,
     val userName: String,
     val userAvatarColor: Color,
     val activityType: String,
     val timeAgo: String,
     val location: String,
+    val lat: Double = 0.0,
+    val lng: Double = 0.0,
     val title: String,
     val description: String,
-    val stats: ActivityStats,
     val friends: List<String>
 )
 
@@ -351,7 +355,7 @@ fun MainApp(
                     navController.navigate("feed") { popUpTo("setup_profile") { inclusive = true } }
                 }
             }
-            composable("feed") { FeedScreen() }
+            composable("feed") { FeedScreen(db) }
             composable("proximity") { ProximityScreen() }
             composable("profile") { ProfileScreen(auth, db, navController) }
         }
@@ -708,15 +712,84 @@ fun ProfileScreen(auth: FirebaseAuth, db: FirebaseFirestore, navController: NavC
 }
 
 @Composable
-fun FeedScreen() {
-    val posts = listOf(
-        ActivityPost(1, "Sarah Johnson", Color.Cyan, "running", "2 hours ago", "Planty Park, Krakow", "Morning Run", "Perfect morning for a run!", ActivityStats("42:15", "8.2 km", "5:09 /km", "524 kcal"), listOf("Mark", "James")),
-        ActivityPost(2, "Mark Thompson", Color.Magenta, "social", "5 hours ago", "Old Town, Krakow", "Coffee Break", "Catching up with old friends.", ActivityStats("1:10:00", "0.0 km", "-", "150 kcal"), listOf("Sarah"))
-    )
+fun FeedScreen(db: FirebaseFirestore) {
+    var posts by remember { mutableStateOf<List<ActivityPost>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
 
-    LazyColumn(modifier = Modifier.fillMaxSize().background(LightGrayBg), contentPadding = PaddingValues(16.dp)) {
-        item { Text("Activity Feed", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp)) }
-        items(posts) { post -> ActivityCard(post) }
+    LaunchedEffect(Unit) {
+        db.collection("activities")
+            .orderBy("time_start", Query.Direction.DESCENDING)
+            .addSnapshotListener { snapshot, e ->
+                if (e != null) {
+                    Log.e("Feed", "Listen failed", e)
+                    isLoading = false
+                    return@addSnapshotListener
+                }
+
+                if (snapshot != null) {
+                    val newPosts = snapshot.documents.mapNotNull { doc ->
+                        try {
+                            val type = doc.getString("type") ?: "Activity"
+                            val description = doc.getString("description") ?: ""
+                            val participants = doc.get("participants") as? List<String> ?: emptyList()
+                            val locationMap = doc.get("location") as? Map<String, Double>
+                            val lat = locationMap?.get("lat") ?: 0.0
+                            val lng = locationMap?.get("lng") ?: 0.0
+                            val timestamp = doc.getTimestamp("time_start")
+
+                            val timeAgo = if (timestamp != null) {
+                                DateUtils.getRelativeTimeSpanString(timestamp.toDate().time).toString()
+                            } else "Just now"
+
+                            val isRun = type.lowercase().contains("run")
+                            val avatarColor = if (isRun) Color.Cyan else Color.Magenta
+
+                            ActivityPost(
+                                id = doc.id,
+                                userName = "User",
+                                userAvatarColor = avatarColor,
+                                activityType = type.replaceFirstChar { it.uppercase() },
+                                timeAgo = timeAgo,
+                                location = "Lat: ${String.format("%.2f", lat)}, Lng: ${String.format("%.2f", lng)}",
+                                lat = lat,
+                                lng = lng,
+                                title = type.uppercase(),
+                                description = description,
+                                friends = participants
+                            )
+                        } catch (e: Exception) {
+                            Log.e("Feed", "Error parsing post: ${doc.id}", e)
+                            null
+                        }
+                    }
+                    posts = newPosts
+                    isLoading = false
+                }
+            }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(LightGrayBg)) {
+        Text(
+            "Activity Feed",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(16.dp)
+        )
+
+        if (isLoading) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = BrandOrange)
+            }
+        } else {
+            LazyColumn(
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                items(posts) { post ->
+                    ActivityCard(post)
+                }
+            }
+        }
     }
 }
 
