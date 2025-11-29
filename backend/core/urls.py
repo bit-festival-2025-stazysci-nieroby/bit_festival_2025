@@ -16,12 +16,15 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from api.views import sync_offline_activity, get_feed, test_firestore
+from api.views import sync_offline_activity, get_feed, test_firestore, like_activity, comment_activity
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/sync/', sync_offline_activity), # Mobile app hits this
     path('api/feed/', get_feed),  
     path("api/test-firestore/", test_firestore),
+    path("api/activity/<str:activity_id>/like/", like_activity),
+    path("api/activity/<str:activity_id>/comment/", comment_activity),
+
 # Web map hits this
 ]

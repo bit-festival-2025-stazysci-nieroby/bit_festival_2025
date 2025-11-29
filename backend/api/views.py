@@ -104,6 +104,71 @@ def get_feed(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+
+@csrf_exempt
+def like_activity(request, activity_id):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST only"}, status=405)
+
+    try:
+        # verify Firebase token
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return JsonResponse({"error": "Missing token"}, status=401)
+        token = auth_header.split(" ")[1]
+        decoded = auth.verify_id_token(token)
+        uid = decoded["uid"]
+
+        # create like doc
+        like_ref = db.collection("activities").document(activity_id)\
+                     .collection("likes").document(uid)
+
+        like_ref.set({
+            "user_id": uid,
+            "timestamp": firestore.SERVER_TIMESTAMP
+        })
+
+        return JsonResponse({"status": "liked"})
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+ 
+ 
+@csrf_exempt
+def comment_activity(request, activity_id):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST only"}, status=405)
+
+    try:
+        # verify Firebase token
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return JsonResponse({"error": "Missing token"}, status=401)
+        token = auth_header.split(" ")[1]
+        decoded = auth.verify_id_token(token)
+        uid = decoded["uid"]
+
+        data = json.loads(request.body)
+        text = data.get("text", "").strip()
+
+        if len(text) == 0:
+            return JsonResponse({"error": "Empty comment"}, status=400)
+
+        comment_ref = db.collection("activities").document(activity_id)\
+                        .collection("comments").document()
+
+        comment_ref.set({
+            "user_id": uid,
+            "text": text,
+            "timestamp": firestore.SERVER_TIMESTAMP
+        })
+
+        return JsonResponse({"status": "comment_added", "comment_id": comment_ref.id})
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
 # -------------------------
 # 3. FIRESTORE CONNECTIVITY TEST
 # -------------------------
