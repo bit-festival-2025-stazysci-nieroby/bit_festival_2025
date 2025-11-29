@@ -1,22 +1,32 @@
 import { useState } from 'react';
 import { doc, setDoc } from 'firebase/firestore'; 
 import { db, auth } from '../lib/firebase';
-import { Check } from 'lucide-react';
+import { Check, Loader2 } from 'lucide-react';
+
+// Upewnij się, że w .env masz zdefiniowane VITE_API_URL (np. http://127.0.0.1:8000)
+// Jeśli nie używasz Vite env, możesz wpisać string na sztywno: "http://127.0.0.1:8000"
+const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
 interface OnboardingProps {
   onComplete: () => void;
 }
-//to trzeba bedzie jakos przerobic
 
 const AVAILABLE_TAGS = [
-  'Running', 'Cycling', 'Gym', 'Yoga', 
-  'Hiking', 'Swimming', 'Crossfit', 'Meditation',
-  'Pilates', 'Team Sports', 'Dancing', 'Climbing'
+  "gym","running", "cycling",
+  "walking",  "hiking",  "swimming",  "basketball",  "football",
+  "volleyball",  "tennis",  "padel",  "badminton",  "climbing",
+  "yoga",  "boxing", "dance",  "skating",  "skiing",  "snowboarding",
+  "shopping",  "nightlife",  "concert", "photography",
+  "events",  "coffee", "lunch","tea", "study",
+  "reading","coding", "music",  "gaming",  "boardgames",  "crafting",  "painting",  "drawing",
+  "writing",  "gardening","learning",  "volunteering",
+  "outdoor", "picnic",  "sightseeing",  "birdwatching","meditation"
 ];
 
 const Onboarding = ({ onComplete }: OnboardingProps) => {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const toggleTag = (tag: string) => {
     if (selectedTags.includes(tag)) {
@@ -29,20 +39,41 @@ const Onboarding = ({ onComplete }: OnboardingProps) => {
   const handleSave = async () => {
     if (!auth.currentUser) return;
     setIsSaving(true);
+    setError(null);
+
+    const uid = auth.currentUser.uid;
 
     try {
-      await setDoc(doc(db, "users", auth.currentUser.uid), {
-        uid: auth.currentUser.uid,
+      // KROK 1: Najpierw tworzymy/aktualizujemy usera w Firebase bezpośrednio.
+      // Jest to konieczne, bo endpoint w Django robi .update(), co wymaga istnienia dokumentu.
+      await setDoc(doc(db, "users", uid), {
+        isOnboardingCompleted: true,
         email: auth.currentUser.email,
         displayName: auth.currentUser.displayName,
         photoURL: auth.currentUser.photoURL,
-        interests: selectedTags,
-        isOnboardingCompleted: true, // Flaga, że user to wypełnił
-        createdAt: new Date().toISOString()
-      }, { merge: true }); 
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      const token = await auth.currentUser.getIdToken();
+      
+      const tagsString = selectedTags.join(',');
+      const url = `${API_URL}/api/user/${uid}/add-tags/${encodeURIComponent(tagsString)}/`;
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`API Error: ${response.statusText}`);
+      }
       onComplete(); 
-    } catch (error) {
-      console.error("Error saving profile:", error);
+
+    } catch (err) {
+      console.error("Error saving profile:", err);
+      setError("Failed to verify tags with server. Please try again.");
     } finally {
       setIsSaving(false);
     }
@@ -60,7 +91,13 @@ const Onboarding = ({ onComplete }: OnboardingProps) => {
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-3 justify-center mb-10">
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-lg text-sm text-center">
+            {error}
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-3 justify-center mb-10 max-h-[60vh] overflow-y-auto p-2">
           {AVAILABLE_TAGS.map((tag) => {
             const isSelected = selectedTags.includes(tag);
             return (
@@ -83,13 +120,19 @@ const Onboarding = ({ onComplete }: OnboardingProps) => {
         <button
           onClick={handleSave}
           disabled={selectedTags.length === 0 || isSaving}
-          className={`w-full py-4 rounded-xl font-bold text-lg transition-all shadow-lg ${
+          className={`w-full py-4 rounded-xl font-bold text-lg transition-all shadow-lg flex items-center justify-center gap-2 ${
             selectedTags.length === 0
               ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
               : 'bg-orange-500 text-white hover:bg-orange-600 shadow-orange-200 cursor-pointer'
           }`}
         >
-          {isSaving ? 'Saving...' : 'Continue to App'}
+          {isSaving ? (
+            <>
+              <Loader2 className="animate-spin" size={24} /> Saving...
+            </>
+          ) : (
+            'Continue to App'
+          )}
         </button>
       </div>
     </div>
