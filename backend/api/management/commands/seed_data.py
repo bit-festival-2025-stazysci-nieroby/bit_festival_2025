@@ -1,5 +1,6 @@
 from django.core.management.base import BaseCommand
 from firebase_admin import firestore
+from api import views
 import random
 
 db = firestore.client()
@@ -41,52 +42,54 @@ class Command(BaseCommand):
         # ============================================================
 
         sample_activity_templates = [
-            "Morning workout",
-            "Coffee break ☕",
-            "Evening walk",
-            "Studying for exams",
-            "Group hangout",
-            "Running together",
-            "Gym session",
-            "Work & chill",
+            {"type": "workout", "description": "Morning workout 💪"},
+            {"type": "coffee", "description": "Coffee break ☕"},
+            {"type": "walk", "description": "Evening walk 🌆"},
+            {"type": "study", "description": "Studying for exams 📚"},
+            {"type": "hangout", "description": "Group hangout 🎉"},
+            {"type": "run", "description": "Running together 🏃‍♂️"},
+            {"type": "gym", "description": "Gym session 🏋️"},
+            {"type": "work", "description": "Work & chill 💻"},
         ]
 
-        locations = [
-            {"lat": 52.22, "lng": 21.01},   # Warsaw
-            {"lat": 52.4064, "lng": 16.9252},  # Poznań
-            {"lat": 50.0647, "lng": 19.9450},  # Kraków
-            {"lat": 51.11, "lng": 17.02},      # Wrocław
-            {"lat": 54.3520, "lng": 18.6466},  # Gdańsk
-        ]
+        city_locations = {
+            "Warsaw": {"lat": 52.22, "lng": 21.01},
+            "Poznań": {"lat": 52.4064, "lng": 16.9252},
+            "Kraków": {"lat": 50.0647, "lng": 19.9450},
+            "Wrocław": {"lat": 51.11, "lng": 17.02},
+            "Gdańsk": {"lat": 54.3520, "lng": 18.6466},
+        }
 
-        # Generate 12 activities
-        for _ in range(12):
+        # Generate 15 activities
+        for _ in range(15):
 
-            # random participants (1–3 users)
-            part_count = random.randint(1, 3)
-            participants = random.sample([u["uid"] for u in fake_users], part_count)
+            # Pick participants (at least 1)
+            selected_users = random.sample(fake_users, random.randint(1, 3))
+            participants = [u["uid"] for u in selected_users]
 
-            # random tags (1–3 tags)
+            # Choose activity template and tags
+            template = random.choice(sample_activity_templates)
             tags = random.sample(example_tags, random.randint(1, 3))
+
+            # City = city of first participant
+            first_city = selected_users[0]["city"]
+            location = city_locations.get(first_city, city_locations["Warsaw"])
 
             activity_ref = db.collection("activities").document()
             activity_ref.set({
+                "type": template["type"],
                 "participants": participants,
                 "tags": tags,
-                "description": random.choice(sample_activity_templates),
-                "location": random.choice(locations),
-                "timestamp": firestore.SERVER_TIMESTAMP
+                "description": template["description"],
+                "location": location,
+                "time_start": firestore.SERVER_TIMESTAMP,
+                "time_end": None,
             })
 
             activity_id = activity_ref.id
 
-            # ============================================================
-            # 3️⃣ LIKES
-            # ============================================================
-
-            like_count = random.randint(0, len(fake_users))
-            like_users = random.sample(fake_users, like_count)
-
+            # ---------- Likes ----------
+            like_users = random.sample(fake_users, random.randint(0, len(fake_users)))
             for u in like_users:
                 activity_ref.collection("likes").document(u["uid"]).set({
                     "user_id": u["uid"],
@@ -94,13 +97,8 @@ class Command(BaseCommand):
                     "timestamp": firestore.SERVER_TIMESTAMP
                 })
 
-            # ============================================================
-            # 4️⃣ COMMENTS
-            # ============================================================
-
-            comment_count = random.randint(0, 5)
-            comment_users = random.sample(fake_users, comment_count)
-
+            # ---------- Comments ----------
+            comment_users = random.sample(fake_users, random.randint(0, 5))
             for u in comment_users:
                 activity_ref.collection("comments").add({
                     "user_id": u["uid"],
@@ -110,8 +108,7 @@ class Command(BaseCommand):
                 })
 
             self.stdout.write(self.style.SUCCESS(
-                f"Activity {activity_id}: {len(participants)} participants, "
-                f"{like_count} likes, {comment_count} comments"
+                f"Activity {activity_id}: {len(participants)} participants"
             ))
 
         self.stdout.write(self.style.SUCCESS("Sample data generation complete!"))

@@ -1,9 +1,10 @@
 import json
+import requests
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from firebase_admin import auth, firestore
 from api import db
-
+from django.conf import settings
 
 # ============================================================
 # Helpers
@@ -43,7 +44,7 @@ def ensure_user_profile(uid):
 def get_display_name_or_default(uid):
     try:
         fb_user = auth.get_user(uid)
-        return fb_user.displayName   or "User"
+        return fb_user.displayName or "User"
     except Exception:
         return "User"
 
@@ -84,11 +85,12 @@ def sync_offline_activity(request):
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
-    
+
+
+
 @csrf_exempt
 def get_activities_by_user(request, uid):
     try:
-        # Query all activities where the user is a participant
         activities = (
             db.collection("activities")
             .where("participants", "array_contains", uid)
@@ -121,7 +123,7 @@ def get_activities_by_user(request, uid):
 
 
 # ============================================================
-# Feed
+# Feed (Original)
 # ============================================================
 
 def get_feed(request):
@@ -220,6 +222,7 @@ def like_activity(request, activity_id):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+
 @csrf_exempt
 def unlike_activity(request, activity_id):
     if request.method != "POST":
@@ -274,6 +277,7 @@ def comment_activity(request, activity_id):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+
 def list_comments(request, activity_id):
     try:
         docs = (
@@ -302,6 +306,7 @@ def list_comments(request, activity_id):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+
 @csrf_exempt
 def delete_comment(request, activity_id, comment_id):
     if request.method != "DELETE":
@@ -326,6 +331,7 @@ def delete_comment(request, activity_id, comment_id):
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+
 
 
 # ============================================================
@@ -367,6 +373,7 @@ def activities_by_tag(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+
 def activities_by_tags_any(request):
     raw = request.GET.get("tags")
     if not raw:
@@ -398,6 +405,7 @@ def activities_by_tags_any(request):
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+
 
 
 def activities_by_tags_all(request):
@@ -433,8 +441,9 @@ def activities_by_tags_all(request):
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
+
 # ============================================================
-# User Tags (UPDATED – UID from URL, no auth)
+# User Tags (No Auth)
 # ============================================================
 
 @csrf_exempt
@@ -451,10 +460,12 @@ def user_add_tag(request, uid, tag):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+
 @csrf_exempt
 def user_add_tags(request, uid, tags):
     if request.method != "POST":
         return JsonResponse({"error": "Only POST allowed"}, status=405)
+
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     user_ref = db.collection("users").document(uid)
     user_doc = user_ref.get()
@@ -471,6 +482,7 @@ def user_add_tags(request, uid, tags):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+
 @csrf_exempt
 def user_remove_tag(request, uid, tag):
     if request.method != "POST":
@@ -483,6 +495,9 @@ def user_remove_tag(request, uid, tag):
         return JsonResponse({"status": "tag_removed", "uid": uid, "tag": tag})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+
+
+
 # ============================================================
 # Test Firestore
 # ============================================================
@@ -494,3 +509,119 @@ def test_firestore(request):
         return JsonResponse({"firestore": "ok", "data": ref.get().to_dict()})
     except Exception as e:
         return JsonResponse({"firestore": "error", "error": str(e)}, status=500)
+
+
+
+# ============================================================
+# AI Feed (NEW)
+# ============================================================
+VISUAL_CROSSING_API_KEY = settings.VISUAL_CROSSING_API_KEY
+
+
+def fetch_weather_ai(lat, lng):
+    """Fetch current weather from Visual Crossing."""
+    try:
+        url = (
+            f"https://weather.visualcrossing.com/VisualCrossingWebServices/"
+            f"rest/services/timeline/{lat},{lng}?unitGroup=metric&key={VISUAL_CROSSING_API_KEY}"
+        )
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("currentConditions", {})
+    except Exception as e:
+        print("[Weather ERROR]", e)
+        return {}
+
+
+def score_activity_weather(activity, weather):
+    """AI-style weather scoring."""
+    tags = activity.get("tags", [])
+    temp = weather.get("temp")
+    conditions = (weather.get("conditions") or "").lower()
+
+    score = 50  # baseline
+
+    # Temperature
+    if temp is not None:
+        if temp < 5:
+            score -= 15
+        elif 5 <= temp <= 15:
+            score += 5
+        elif 16 <= temp <= 25:
+            score += 10
+        elif temp > 30:
+            score -= 10
+
+    # Conditions
+    if "rain" in conditions or "snow" in conditions:
+        if any(t in ["outside", "walking", "sport", "adventure"] for t in tags):
+            score -= 20
+        if any(t in ["indoor", "cafe", "gaming", "movie"] for t in tags):
+            score += 10
+
+    if "sunny" in conditions or "clear" in conditions:
+        if any(t in ["walking", "nature", "sport", "outside"] for t in tags):
+            score += 15
+
+    return max(1, min(score, 100))
+
+
+
+def get_feed_ai(request):
+    """New weather-aware, AI-enhanced feed."""
+    uid, _ = get_uid_from_request(request)
+
+    # Require lat & lng
+    lat = request.GET.get("lat")
+    lng = request.GET.get("lng")
+
+    if not lat or not lng:
+        return JsonResponse({"error": "Missing ?lat=&lng="}, status=400)
+
+    weather = fetch_weather_ai(lat, lng)
+
+    try:
+        docs = (
+            db.collection("activities")
+            .order_by("time_start", direction=firestore.Query.DESCENDING)
+            .limit(100)
+            .stream()
+        )
+
+        feed = []
+
+        for doc in docs:
+            act = doc.to_dict()
+            activity_id = doc.id
+
+            ts_start = act.get("time_start")
+            ts_end = act.get("time_end")
+
+            likes_ref = db.collection("activities").document(activity_id).collection("likes")
+            likes_count = len(list(likes_ref.stream()))
+            user_liked = uid and likes_ref.document(uid).get().exists
+
+            ai_score = score_activity_weather(act, weather)
+
+            feed.append({
+                "id": activity_id,
+                "tags": act.get("tags"),
+                "description": act.get("description"),
+                "location": act.get("location"),
+                "participants": act.get("participants"),
+                "time_start": ts_start.isoformat() if ts_start else None,
+                "time_end": ts_end.isoformat() if ts_end else None,
+                "likes_count": likes_count,
+                "comments_count": 0,
+                "user_liked": user_liked,
+                "ai_score": ai_score,
+                "weather_now": weather
+            })
+
+        feed.sort(key=lambda x: x["ai_score"], reverse=True)
+
+        return JsonResponse({"feed": feed})
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)

@@ -1,10 +1,11 @@
 from pathlib import Path
 import os
-
+from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = 'django-insecure-3rf-jke#emz2z6xpk=e%4enxnj45hf9$y8tb_dpgh5aqj_l(re'
-
+load_dotenv()
+VISUAL_CROSSING_API_KEY = os.getenv("VISUAL_CROSSING_API_KEY")  
 DEBUG = True
 
 ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
