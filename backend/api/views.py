@@ -4,15 +4,13 @@ from django.views.decorators.csrf import csrf_exempt
 from firebase_admin import auth, firestore
 from api import db
 
+
 # ============================================================
 # Helpers
 # ============================================================
 
 def get_uid_from_request(request):
-    """
-    Extract and verify Firebase ID token from Authorization header.
-    Returns (uid, error_response) - error_response is JsonResponse or None.
-    """
+    """ Extract and verify Firebase ID token from Authorization header. """
     auth_header = request.headers.get("Authorization")
     if not auth_header:
         return None, JsonResponse({"error": "Missing Authorization header"}, status=401)
@@ -26,18 +24,12 @@ def get_uid_from_request(request):
 
 
 def ensure_user_profile(uid):
-    """
-    Ensure that a minimal user profile exists in /users/{uid}.
-    Fields: uid, tags, description, city, created_at
-    """
+    """Ensure minimal user profile exists."""
     user_ref = db.collection("users").document(uid)
     doc = user_ref.get()
-
     if not doc.exists:
-        # Try to get firebase user to set some basic name if available.
         try:
             fb_user = auth.get_user(uid)
-            # If display_name is available we could save it, but minimal profile per spec.
         except Exception:
             fb_user = None
 
@@ -47,11 +39,10 @@ def ensure_user_profile(uid):
             "description": "",
             "city": "",
             "created_at": firestore.SERVER_TIMESTAMP,
-            # optionally store display_name: fb_user.display_name if fb_user else ""
+            "display_name": fb_user.display_name if fb_user else ""
         })
 
 
-# Helper to safely fetch display name (if auth service available)
 def get_display_name_or_default(uid):
     try:
         fb_user = auth.get_user(uid)
@@ -66,7 +57,7 @@ def get_display_name_or_default(uid):
 
 @csrf_exempt
 def sync_offline_activity(request):
-    """Create activity (mobile offline sync). Requires Authorization header with Firebase token."""
+    """Create activity (mobile offline sync)."""
     if request.method != "POST":
         return JsonResponse({"error": "POST only"}, status=405)
 
@@ -84,12 +75,21 @@ def sync_offline_activity(request):
         activity_ref.set({
             "participants": list(filter(None, [uid, friend_uid])),
             "tags": data.get("tags", []),
-            "timestamp": firestore.SERVER_TIMESTAMP,
-            "location": {"lat": data.get("lat"), "lng": data.get("lng")},
+
+            # NEW: time_start = now
+            "time_start": firestore.SERVER_TIMESTAMP,
+
+            # NEW: time_end from request or None
+            "time_end": data.get("time_end"),
+
+            "location": {
+                "lat": data.get("lat"),
+                "lng": data.get("lng")
+            },
             "description": data.get("description", "")
         })
 
-        # Optionally add to user's recent_activities (if you want)
+        # Save recent activities
         try:
             db.collection("users").document(uid).update({
                 "recent_activities": firestore.ArrayUnion([activity_ref.id])
@@ -99,7 +99,6 @@ def sync_offline_activity(request):
                     "recent_activities": firestore.ArrayUnion([activity_ref.id])
                 })
         except Exception:
-            # If update fails (e.g. no user doc) we ignore — ensure_user_profile created doc earlier
             pass
 
         return JsonResponse({"status": "success", "activity_id": activity_ref.id})
@@ -114,13 +113,13 @@ def sync_offline_activity(request):
 # ============================================================
 
 def get_feed(request):
-    """Return feed: latest activities with likes_count, comments_count, user_liked, last_comment."""
-    uid, _ = get_uid_from_request(request)  # uid optional for guest requests
+    """Return feed: latest activities."""
+    uid, _ = get_uid_from_request(request)
 
     try:
         docs = (
             db.collection("activities")
-            .order_by("timestamp", direction=firestore.Query.DESCENDING)
+            .order_by("time_start", direction=firestore.Query.DESCENDING)
             .limit(50)
             .stream()
         )
@@ -131,43 +130,36 @@ def get_feed(request):
             act = doc.to_dict()
             activity_id = doc.id
 
-            ts = act.get("timestamp")
-            ts_iso = ts.isoformat() if ts else None
+            ts_start = act.get("time_start")
+            ts_end = act.get("time_end")
 
-            # --- likes_count (fast check if user liked) ---
-            # For user_liked: check if document exists (fast)
+            # Likes
+            likes_ref = db.collection("activities").document(activity_id).collection("likes")
             try:
-                likes_ref = db.collection("activities").document(activity_id).collection("likes")
-                # Try to use count() for total count (may require new SDK); fallback to streaming
-                try:
-                    likes_count = likes_ref.count().get().value
-                except Exception:
-                    likes_count = len(list(likes_ref.stream()))
-                # user_liked: document exists?
-                user_liked = False
-                if uid:
-                    try:
-                        user_liked = likes_ref.document(uid).get().exists
-                    except Exception:
-                        # fallback to scanning (slower)
-                        user_liked = any(l.id == uid for l in likes_ref.stream())
+                likes_count = likes_ref.count().get().value
             except Exception:
-                likes_count = 0
-                user_liked = False
+                likes_count = len(list(likes_ref.stream()))
 
-            # --- comments_count + last_comment ---
+            user_liked = False
+            if uid:
+                try:
+                    user_liked = likes_ref.document(uid).get().exists
+                except Exception:
+                    user_liked = any(l.id == uid for l in likes_ref.stream())
+
+            # Comments
             comments_ref = db.collection("activities").document(activity_id).collection("comments")
             try:
-                try:
-                    comments_count = comments_ref.count().get().value
-                except Exception:
-                    comments_count = len(list(comments_ref.stream()))
+                comments_count = comments_ref.count().get().value
             except Exception:
-                comments_count = 0
+                comments_count = len(list(comments_ref.stream()))
 
+            # Last comment
             last_comment = None
             try:
-                last_docs = comments_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1).stream()
+                last_docs = comments_ref.order_by(
+                    "timestamp", direction=firestore.Query.DESCENDING
+                ).limit(1).stream()
                 last_docs = list(last_docs)
                 if last_docs:
                     c = last_docs[0].to_dict()
@@ -179,7 +171,7 @@ def get_feed(request):
                         "timestamp": c_ts.isoformat() if c_ts else None
                     }
             except Exception:
-                last_comment = None
+                pass
 
             feed.append({
                 "id": activity_id,
@@ -187,7 +179,10 @@ def get_feed(request):
                 "description": act.get("description"),
                 "location": act.get("location"),
                 "participants": act.get("participants"),
-                "timestamp": ts_iso,
+
+                "time_start": ts_start.isoformat() if ts_start else None,
+                "time_end": ts_end.isoformat() if ts_end else None,
+
                 "likes_count": likes_count,
                 "comments_count": comments_count,
                 "user_liked": user_liked,
@@ -202,12 +197,11 @@ def get_feed(request):
 
 
 # ============================================================
-# 3. Like / Unlike
+# 3. Likes
 # ============================================================
 
 @csrf_exempt
 def like_activity(request, activity_id):
-    """POST: like activity (creates activities/{id}/likes/{uid})."""
     if request.method != "POST":
         return JsonResponse({"error": "POST only"}, status=405)
 
@@ -219,8 +213,7 @@ def like_activity(request, activity_id):
     display_name = get_display_name_or_default(uid)
 
     try:
-        like_ref = db.collection("activities").document(activity_id).collection("likes").document(uid)
-        like_ref.set({
+        db.collection("activities").document(activity_id).collection("likes").document(uid).set({
             "user_id": uid,
             "user_display_name": display_name,
             "timestamp": firestore.SERVER_TIMESTAMP
@@ -232,7 +225,6 @@ def like_activity(request, activity_id):
 
 @csrf_exempt
 def unlike_activity(request, activity_id):
-    """POST: unlike activity (deletes like doc)."""
     if request.method != "POST":
         return JsonResponse({"error": "POST only"}, status=405)
 
@@ -253,7 +245,6 @@ def unlike_activity(request, activity_id):
 
 @csrf_exempt
 def comment_activity(request, activity_id):
-    """POST: add comment to activity."""
     if request.method != "POST":
         return JsonResponse({"error": "POST only"}, status=405)
 
@@ -286,10 +277,10 @@ def comment_activity(request, activity_id):
 
 
 def list_comments(request, activity_id):
-    """GET: list comments (newest first)."""
     try:
         docs = (
-            db.collection("activities").document(activity_id)
+            db.collection("activities")
+            .document(activity_id)
             .collection("comments")
             .order_by("timestamp", direction=firestore.Query.DESCENDING)
             .stream()
@@ -308,13 +299,13 @@ def list_comments(request, activity_id):
             })
 
         return JsonResponse({"comments": comments})
+
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
 
 @csrf_exempt
 def delete_comment(request, activity_id, comment_id):
-    """DELETE: remove comment if owner."""
     if request.method != "DELETE":
         return JsonResponse({"error": "DELETE only"}, status=405)
 
@@ -325,6 +316,7 @@ def delete_comment(request, activity_id, comment_id):
     try:
         ref = db.collection("activities").document(activity_id).collection("comments").document(comment_id)
         doc = ref.get()
+
         if not doc.exists:
             return JsonResponse({"error": "Comment not found"}, status=404)
 
@@ -333,16 +325,16 @@ def delete_comment(request, activity_id, comment_id):
 
         ref.delete()
         return JsonResponse({"status": "comment_deleted"})
+
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
 
 # ============================================================
-# 5. Tag filtering / user tag management
+# 5. Tag Filtering
 # ============================================================
 
 def activities_by_tag(request):
-    """GET: ?tag=xxx - activities having provided tag (single)."""
     tag = request.GET.get("tag")
     if not tag:
         return JsonResponse({"error": "Missing ?tag="}, status=400)
@@ -351,7 +343,7 @@ def activities_by_tag(request):
         docs = (
             db.collection("activities")
             .where("tags", "array_contains", tag)
-            .order_by("timestamp", direction=firestore.Query.DESCENDING)
+            .order_by("time_start", direction=firestore.Query.DESCENDING)
             .limit(50)
             .stream()
         )
@@ -359,24 +351,25 @@ def activities_by_tag(request):
         activities = []
         for doc in docs:
             a = doc.to_dict()
-            ts = a.get("timestamp")
+            ts = a.get("time_start")
             activities.append({
                 "id": doc.id,
                 "participants": a.get("participants", []),
                 "tags": a.get("tags", []),
                 "description": a.get("description", ""),
                 "location": a.get("location"),
-                "timestamp": ts.isoformat() if ts else None
+                "time_start": ts.isoformat() if ts else None,
+                "time_end": a.get("time_end")
             })
 
         return JsonResponse({"activities": activities})
+
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
 
 @csrf_exempt
 def user_add_tag(request):
-    """POST: add a tag to current user. Body: { "tag": "fitness" }"""
     if request.method != "POST":
         return JsonResponse({"error": "POST only"}, status=405)
 
@@ -387,23 +380,22 @@ def user_add_tag(request):
     try:
         data = json.loads(request.body)
         tag = data.get("tag")
+
         if not tag:
             return JsonResponse({"error": "Missing tag"}, status=400)
 
         db.collection("users").document(uid).update({
             "tags": firestore.ArrayUnion([tag])
         })
+
         return JsonResponse({"status": "tag_added", "tag": tag})
+
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
 
 @csrf_exempt
 def user_add_tags(request):
-    """
-    POST: add multiple tags to current user.
-    Body: { "tags": ["fitness", "coffee", "friends"] }
-    """
     if request.method != "POST":
         return JsonResponse({"error": "POST only"}, status=405)
 
@@ -418,8 +410,8 @@ def user_add_tags(request):
         if not tags or not isinstance(tags, list):
             return JsonResponse({"error": "Missing or invalid 'tags' list"}, status=400)
 
-        # Remove empty strings
         cleaned = [t for t in tags if isinstance(t, str) and t.strip()]
+
         if not cleaned:
             return JsonResponse({"error": "No valid tags"}, status=400)
 
@@ -435,7 +427,6 @@ def user_add_tags(request):
 
 @csrf_exempt
 def user_remove_tag(request):
-    """POST: remove a tag from current user. Body: { "tag": "fitness" }"""
     if request.method != "POST":
         return JsonResponse({"error": "POST only"}, status=405)
 
@@ -446,22 +437,21 @@ def user_remove_tag(request):
     try:
         data = json.loads(request.body)
         tag = data.get("tag")
+
         if not tag:
             return JsonResponse({"error": "Missing tag"}, status=400)
 
         db.collection("users").document(uid).update({
             "tags": firestore.ArrayRemove([tag])
         })
+
         return JsonResponse({"status": "tag_removed", "tag": tag})
+
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
 
 def activities_by_tags_any(request):
-    """
-    GET: ?tags=a,b,c  - return activities that have ANY of the provided tags (OR).
-    Implementation: query by first tag then filter server-side.
-    """
     raw = request.GET.get("tags")
     if not raw:
         return JsonResponse({"error": "Missing ?tags="}, status=400)
@@ -478,28 +468,25 @@ def activities_by_tags_any(request):
         for doc in docs:
             a = doc.to_dict()
             if any(tag in a.get("tags", []) for tag in tags):
-                ts = a.get("timestamp")
+                ts = a.get("time_start")
                 results.append({
                     "id": doc.id,
                     "participants": a.get("participants", []),
                     "tags": a.get("tags", []),
                     "description": a.get("description", ""),
                     "location": a.get("location"),
-                    "timestamp": ts.isoformat() if ts else None
+                    "time_start": ts.isoformat() if ts else None,
+                    "time_end": a.get("time_end")
                 })
 
-        # Optionally sort by timestamp desc
-        results.sort(key=lambda x: x.get("timestamp") or "", reverse=True)
+        results.sort(key=lambda x: x.get("time_start") or "", reverse=True)
         return JsonResponse({"activities": results})
+
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
 
 def activities_by_tags_all(request):
-    """
-    GET: ?tags=a,b,c - return activities that have ALL provided tags (AND).
-    Implementation: query by first tag then filter server-side for all.
-    """
     raw = request.GET.get("tags")
     if not raw:
         return JsonResponse({"error": "Missing ?tags="}, status=400)
@@ -515,30 +502,30 @@ def activities_by_tags_all(request):
         results = []
         for doc in docs:
             a = doc.to_dict()
-            activity_tags = a.get("tags", [])
-            if all(t in activity_tags for t in tags):
-                ts = a.get("timestamp")
+            if all(t in a.get("tags", []) for t in tags):
+                ts = a.get("time_start")
                 results.append({
                     "id": doc.id,
                     "participants": a.get("participants", []),
-                    "tags": activity_tags,
+                    "tags": a.get("tags", []),
                     "description": a.get("description", ""),
                     "location": a.get("location"),
-                    "timestamp": ts.isoformat() if ts else None
+                    "time_start": ts.isoformat() if ts else None,
+                    "time_end": a.get("time_end")
                 })
 
-        results.sort(key=lambda x: x.get("timestamp") or "", reverse=True)
+        results.sort(key=lambda x: x.get("time_start") or "", reverse=True)
         return JsonResponse({"activities": results})
+
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
 
 # ============================================================
-# 6. Firestore Test
+# Test Firestore
 # ============================================================
 
 def test_firestore(request):
-    """Simple connectivity test for Firestore."""
     try:
         ref = db.collection("test_check").document("ping")
         ref.set({"status": "working"})
