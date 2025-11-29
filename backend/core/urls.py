@@ -1,5 +1,5 @@
 """
-URL configuration for BackendBit project.
+URL configuration for core project.
 
 The `urlpatterns` list routes URLs to views. For more information please see:
     https://docs.djangoproject.com/en/4.2/topics/http/urls/
@@ -16,7 +16,10 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
+from api.views import sync_offline_activity, get_feed
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/sync/', sync_offline_activity), # Mobile app hits this
+    path('api/feed/', get_feed),              # Web map hits this
 ]
