@@ -1,25 +1,50 @@
 import { useState, useEffect } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import type { User as FirebaseUser } from 'firebase/auth'; 
-import { auth } from './lib/firebase';
+import type { User as FirebaseUser } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db } from './lib/firebase'; 
 import { MoreHorizontal, Loader2 } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import ActivityCard from './components/ActivityCard';
 import Login from './components/Login';
+import Onboarding from './components/OnBoarding';
 import { mockPosts } from './lib/mockdata';
 
 function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        try {
+          const userDocRef = doc(db, "users", currentUser.uid);
+          const userDocSnap = await getDoc(userDocRef);
+
+          if (userDocSnap.exists() && userDocSnap.data().isOnboardingCompleted) {
+            setShowOnboarding(false);
+          } else {
+            setShowOnboarding(true);
+          }
+        } catch (error) {
+          console.error("Error checking user profile:", error);
+          setShowOnboarding(true); 
+        }
+      } else {
+        setUser(null);
+        setShowOnboarding(false);
+      }
       setLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
+
+  const handleOnboardingComplete = () => {
+    setShowOnboarding(false);
+  };
 
   if (loading) {
     return (
@@ -30,6 +55,9 @@ function App() {
   }
   if (!user) {
     return <Login />;
+  }
+  if (showOnboarding) {
+    return <Onboarding onComplete={handleOnboardingComplete} />;
   }
   return (
     <div className="flex min-h-screen bg-gray-50 font-sans">
@@ -49,7 +77,7 @@ function App() {
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-gray-900">Activity Feed</h1>
             <p className="text-gray-500 mt-1">
-              Hi, {user.displayName || 'Użytkowniku'}! Zobacz co u znajomych.
+              Welcome back, {user.displayName?.split(' ')[0] || 'User'}! See what your friends are up to.
             </p>
           </div>
           
