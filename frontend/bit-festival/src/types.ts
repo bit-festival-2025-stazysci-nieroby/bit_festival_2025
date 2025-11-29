@@ -22,8 +22,8 @@ export interface SocialData {
   likes: number;
   comments: number;
   taggedUsers?: string[];
-  userLiked?: boolean; // Nowe pole
-  lastComment?: CommentData | null; // Nowe pole
+  userLiked?: boolean; 
+  lastComment?: CommentData | null; 
 }
 
 export interface ActivityPost {
