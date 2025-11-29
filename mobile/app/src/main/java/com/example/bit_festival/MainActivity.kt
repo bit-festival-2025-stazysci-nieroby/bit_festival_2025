@@ -40,6 +40,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
@@ -76,10 +77,13 @@ import kotlinx.coroutines.withContext
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
+import kotlinx.coroutines.delay
 import org.osmdroid.views.MapView
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToInt
+import androidx.compose.animation.core.animateFloatAsState
+import android.location.LocationListener
 
 // --- DATA MODELS ---
 data class UserProfile(
@@ -112,6 +116,33 @@ data class ActivityStats(
     val pace: String,
     val calories: String
 )
+
+@SuppressLint("MissingPermission")
+@Composable
+fun LocationUpdatesEffect(
+    isActive: Boolean,
+    onLocationUpdate: (Location) -> Unit
+) {
+    val context = LocalContext.current
+    val currentOnLocationUpdate by rememberUpdatedState(onLocationUpdate)
+
+    DisposableEffect(isActive) {
+        if (!isActive) return@DisposableEffect onDispose { }
+
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val listener = LocationListener { location ->
+            currentOnLocationUpdate(location)
+        }
+
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            // REQUEST HIGH ACCURACY UPDATES: 500ms or 0 meters
+            locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 500L, 0f, listener)
+            locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 500L, 0f, listener)
+        }
+
+        onDispose { locationManager.removeUpdates(listener) }
+    }
+}
 
 // --- COLORS ---
 val BrandOrange = Color(0xFFFF5722)
@@ -152,9 +183,7 @@ class MainActivity : ComponentActivity() {
 
 // --- COMPASS HELPER ---
 @Composable
-fun CompassEffect(
-    onAzimuthChanged: (Float) -> Unit
-) {
+fun CompassEffect(onAzimuthChanged: (Float) -> Unit) {
     val context = LocalContext.current
     DisposableEffect(Unit) {
         val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -164,31 +193,43 @@ fun CompassEffect(
         val listener = object : SensorEventListener {
             var gravity: FloatArray? = null
             var geomagnetic: FloatArray? = null
+            var hasGravity = false
+            var hasGeo = false
+            // Tweak: Higher alpha = faster response, Lower = smoother
+            val alpha = 0.1f
 
             override fun onSensorChanged(event: SensorEvent?) {
-                if (event?.sensor?.type == Sensor.TYPE_ACCELEROMETER) gravity = event.values
-                if (event?.sensor?.type == Sensor.TYPE_MAGNETIC_FIELD) geomagnetic = event.values
-
-                if (gravity != null && geomagnetic != null) {
+                if (event == null) return
+                if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+                    if (gravity == null) gravity = event.values
+                    else {
+                        for (i in 0..2) gravity!![i] = alpha * event.values[i] + (1 - alpha) * gravity!![i]
+                    }
+                    hasGravity = true
+                }
+                if (event.sensor.type == Sensor.TYPE_MAGNETIC_FIELD) {
+                    if (geomagnetic == null) geomagnetic = event.values
+                    else {
+                        for (i in 0..2) geomagnetic!![i] = alpha * event.values[i] + (1 - alpha) * geomagnetic!![i]
+                    }
+                    hasGeo = true
+                }
+                if (hasGravity && hasGeo) {
                     val R = FloatArray(9)
                     val I = FloatArray(9)
                     if (SensorManager.getRotationMatrix(R, I, gravity, geomagnetic)) {
                         val orientation = FloatArray(3)
                         SensorManager.getOrientation(R, orientation)
                         val azimuth = Math.toDegrees(orientation[0].toDouble()).toFloat()
-                        onAzimuthChanged(azimuth)
+                        onAzimuthChanged((azimuth + 360) % 360)
                     }
                 }
             }
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
         }
-
         sensorManager.registerListener(listener, accelerometer, SensorManager.SENSOR_DELAY_UI)
         sensorManager.registerListener(listener, magnetometer, SensorManager.SENSOR_DELAY_UI)
-
-        onDispose {
-            sensorManager.unregisterListener(listener)
-        }
+        onDispose { sensorManager.unregisterListener(listener) }
     }
 }
 
@@ -712,74 +753,86 @@ fun OsmMapView() {
 fun ProximityScreen() {
     var isSearching by remember { mutableStateOf(false) }
     var connectionStatus by remember { mutableStateOf("Ready to connect") }
+    var hasMet by remember { mutableStateOf(false) }
 
-    // Triggers the GPS exchange when set
+    // Connection & Location State
     var connectedEndpointId by remember { mutableStateOf<String?>(null) }
+    var myLocation by remember { mutableStateOf<Location?>(null) }
+    var friendLocation by remember { mutableStateOf<Location?>(null) }
 
-    // Compass / Location State
+    // Compass State
     var myAzimuth by remember { mutableFloatStateOf(0f) }
     var targetBearing by remember { mutableStateOf<Float?>(null) }
     var targetDistance by remember { mutableStateOf<Float?>(null) }
 
     val context = LocalContext.current
 
-    // Listen to device compass
-    CompassEffect { azimuth ->
-        myAzimuth = azimuth
+    // 1. Listen to Compass
+    CompassEffect { azimuth -> myAzimuth = azimuth }
+
+    // 2. ACTIVE GPS TRACKING (Runs when searching or connected)
+    // This forces the GPS chip to stay ON and update every 500ms
+    LocationUpdatesEffect(isActive = isSearching || connectedEndpointId != null) { loc ->
+        myLocation = loc
+        // Log.d("ProximityGPS", "My Loc Updated: ${loc.accuracy}m accuracy")
     }
 
-    // Initialize Manager locally with BOTH callbacks
+    // 3. CALCULATE BEARING & DISTANCE (Reactive)
+    // Re-runs automatically whenever myLocation OR friendLocation changes
+    LaunchedEffect(myLocation, friendLocation) {
+        if (myLocation != null && friendLocation != null) {
+            val dist = myLocation!!.distanceTo(friendLocation!!)
+            val bear = myLocation!!.bearingTo(friendLocation!!)
+
+            targetDistance = dist
+            targetBearing = bear
+
+            if (dist < 10.0) { // 10m threshold
+                hasMet = true
+                connectionStatus = "Success! You found each other!"
+            } else {
+                connectionStatus = "Distance: ${dist.roundToInt()}m (Acc: ${myLocation!!.accuracy.roundToInt()}m)"
+            }
+        }
+    }
+
     val nearbyManager = remember {
         NearbyManager(
             context = context,
             onStatusUpdate = { status -> connectionStatus = status },
             onLocationReceived = { lat, lng ->
-                // Logic to handle receiving a friend's location
-                val myLoc = getLastKnownLocation(context)
-                if (myLoc != null) {
-                    val targetLoc = Location("target").apply { latitude = lat; longitude = lng }
-                    val bearing = myLoc.bearingTo(targetLoc)
-                    val distance = myLoc.distanceTo(targetLoc)
-
-                    // Update state to switch UI to Compass Mode
-                    targetBearing = bearing
-                    targetDistance = distance
-                    connectionStatus = "Friend found! ${distance.roundToInt()}m away"
-
-                    // Stop the radar spinner since we found them
-                    isSearching = false
-                } else {
-                    connectionStatus = "Friend loc received (waiting for GPS...)"
-                }
+                // Just update the state, the LaunchedEffect above handles the math
+                val friendLoc = Location("friend").apply { latitude = lat; longitude = lng }
+                friendLocation = friendLoc
             },
             onConnected = { endpointId ->
-                // Set this state to trigger the LaunchedEffect below
                 connectedEndpointId = endpointId
             }
         )
     }
 
-    // AUTOMATICALLY SEND LOCATION ON CONNECTION
-    LaunchedEffect(connectedEndpointId) {
-        connectedEndpointId?.let { endpointId ->
-            val myLoc = getLastKnownLocation(context)
-            if (myLoc != null) {
-                // Send my coordinates to the connected friend
-                nearbyManager.sendLocation(myLoc.latitude, myLoc.longitude, endpointId)
-                connectionStatus = "Sent Location. Waiting for friend..."
-            } else {
-                connectionStatus = "Connected, but GPS unavailable!"
+    // 4. DATA SYNC LOOP (Sends MY location every 500ms)
+    LaunchedEffect(connectedEndpointId, myLocation) {
+        if (connectedEndpointId != null && myLocation != null) {
+            while(true) {
+                // Only send if accuracy is decent (<30m) to avoid jumping, or send anyway if it's all we have
+                nearbyManager.sendLocation(myLocation!!.latitude, myLocation!!.longitude, connectedEndpointId!!)
+                delay(500) // Fast updates for smooth compass
             }
         }
     }
 
+    // Animation
+    val rotation by animateFloatAsState(
+        targetValue = if (targetBearing != null) (targetBearing!! - myAzimuth).let { if (it < 0) it + 360 else it } else 0f,
+        animationSpec = tween(durationMillis = 300),
+        label = "Compass"
+    )
+
     DisposableEffect(Unit) { onDispose { nearbyManager.stopAll() } }
 
     val permissionsToRequest = remember {
-        mutableListOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        ).apply {
+        mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION).apply {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.NEARBY_WIFI_DEVICES)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 add(Manifest.permission.BLUETOOTH_SCAN)
@@ -791,101 +844,42 @@ fun ProximityScreen() {
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { perms ->
         if (perms.values.all { it }) {
-            if (!isLocationEnabled(context)) {
-                context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
-            } else {
-                isSearching = true
-                connectionStatus = "Starting..."
-                val randomUser = "User-${(1000..9999).random()}"
-                nearbyManager.startAdvertising(randomUser)
-                nearbyManager.startDiscovery()
-            }
+            if (!isLocationEnabled(context)) context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            else { isSearching = true; connectionStatus = "Starting..."; nearbyManager.startAdvertising("User-${(1000..9999).random()}"); nearbyManager.startDiscovery() }
         }
     }
 
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-
-        // --- COMPASS / RADAR UI ---
-        Box(contentAlignment = Alignment.Center) {
-            if (isSearching && targetBearing == null) {
-                // Searching Animation (Radar)
-                CircularProgressIndicator(modifier = Modifier.size(200.dp), color = BrandOrange.copy(alpha = 0.3f), strokeWidth = 8.dp)
-                Icon(Icons.Default.Radar, null, modifier = Modifier.size(80.dp), tint = BrandOrange)
-            } else if (targetBearing != null) {
-                // COMPASS MODE: Arrow points to friend
-                // Calculate rotation: Target Bearing - Device Azimuth
-                val rotation = (targetBearing!! - myAzimuth).let { if (it < 0) it + 360 else it }
-
-                Icon(
-                    Icons.Default.Navigation, // Arrow Icon
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(200.dp)
-                        .rotate(rotation),
-                    tint = BrandOrange
-                )
-
-                // Distance Text Overlay
-                Text(
-                    "${targetDistance?.roundToInt()}m",
-                    style = MaterialTheme.typography.headlineLarge,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.align(Alignment.BottomCenter).offset(y = 80.dp)
-                )
-            } else {
-                // Idle State
-                Icon(Icons.Default.Radar, null, modifier = Modifier.size(80.dp), tint = Color.Gray)
-            }
-        }
-
-        Spacer(Modifier.height(100.dp))
-
-        Text(
-            text = connectionStatus,
-            textAlign = TextAlign.Center,
-            color = if (connectionStatus.contains("Connected") || targetBearing != null) BrandOrange else Color.Gray,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 32.dp)
-        )
-
-        if (!isSearching && targetBearing == null) {
-            Button(
-                onClick = {
-                    if (hasRequiredPermissions(context)) {
-                        if (!isLocationEnabled(context)) {
-                            context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
-                        } else {
-                            isSearching = true
-                            connectionStatus = "Starting..."
-                            val randomUser = "User-${(1000..9999).random()}"
-                            nearbyManager.startAdvertising(randomUser)
-                            nearbyManager.startDiscovery()
-                        }
-                    } else {
-                        launcher.launch(permissionsToRequest)
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text("Connect", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            }
+        if (hasMet) {
+            Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(120.dp), tint = Color(0xFF4CAF50))
+            Spacer(Modifier.height(24.dp))
+            Text("You Matched!", style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.Bold, color = Color(0xFF4CAF50))
+            Text("You are within 10 meters.", color = Color.Gray)
+            Spacer(Modifier.height(48.dp))
+            Button(onClick = { hasMet = false; isSearching = false; targetBearing = null; targetDistance = null; connectedEndpointId = null; nearbyManager.stopAll(); connectionStatus = "Ready" }, colors = ButtonDefaults.buttonColors(containerColor = BrandOrange), modifier = Modifier.fillMaxWidth().height(56.dp)) { Text("Close") }
         } else {
-            OutlinedButton(
-                onClick = {
-                    isSearching = false
-                    targetBearing = null
-                    targetDistance = null
-                    connectedEndpointId = null // Reset connection state
-                    nearbyManager.stopAll()
-                },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, BrandOrange),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandOrange)
-            ) {
-                Text("Cancel", fontSize = 18.sp)
+            Box(contentAlignment = Alignment.Center) {
+                if (isSearching && targetBearing == null) {
+                    CircularProgressIndicator(modifier = Modifier.size(200.dp), color = BrandOrange.copy(alpha = 0.3f), strokeWidth = 8.dp)
+                    Icon(Icons.Default.Radar, null, modifier = Modifier.size(80.dp), tint = BrandOrange)
+                } else if (targetBearing != null) {
+                    Icon(Icons.Default.Navigation, null, modifier = Modifier.size(200.dp).rotate(rotation), tint = BrandOrange)
+                    // Show Distance AND Accuracy
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.align(Alignment.BottomCenter).offset(y = 80.dp)) {
+                        Text("${targetDistance?.roundToInt()}m", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                        Text("GPS Acc: ±${myLocation?.accuracy?.roundToInt()}m", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    }
+                } else {
+                    Icon(Icons.Default.Radar, null, modifier = Modifier.size(80.dp), tint = Color.Gray)
+                }
+            }
+            Spacer(Modifier.height(100.dp))
+            Text(text = if(targetDistance != null) "Tracking..." else connectionStatus, textAlign = TextAlign.Center, color = BrandOrange, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 32.dp))
+
+            if (!isSearching && targetBearing == null) {
+                Button(onClick = { if (hasRequiredPermissions(context)) { if (!isLocationEnabled(context)) context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) else { isSearching = true; connectionStatus = "Starting..."; nearbyManager.startAdvertising("User-${(1000..9999).random()}"); nearbyManager.startDiscovery() } } else launcher.launch(permissionsToRequest) }, colors = ButtonDefaults.buttonColors(containerColor = BrandOrange), modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(12.dp)) { Text("Connect") }
+            } else {
+                OutlinedButton(onClick = { isSearching = false; connectedEndpointId = null; nearbyManager.stopAll() }, modifier = Modifier.fillMaxWidth().height(56.dp), border = BorderStroke(1.dp, BrandOrange), colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandOrange)) { Text("Cancel") }
             }
         }
     }

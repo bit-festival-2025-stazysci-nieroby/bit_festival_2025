@@ -126,7 +126,7 @@ class NearbyManager(
     }
 
     private val endpointDiscoveryCallback = object : EndpointDiscoveryCallback() {
-        override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
+        override fun onEndpointFound(endpointId: String,     info: DiscoveredEndpointInfo) {
             Log.d(TAG, "Found peer: ${info.endpointName}")
 
             // TIE BREAKER: Only alphabetic winner requests connection
