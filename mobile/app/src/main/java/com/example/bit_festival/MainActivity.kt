@@ -3,12 +3,19 @@ package com.example.bit_festival
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.location.Geocoder
+import android.location.Location
 import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -34,6 +41,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -71,6 +79,7 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.roundToInt
 
 // --- DATA MODELS ---
 data class UserProfile(
@@ -125,9 +134,6 @@ class MainActivity : ComponentActivity() {
         auth = Firebase.auth
         db = Firebase.firestore
 
-        // Initialize Proximity Manager
-        val nearbyManager = NearbyManager(this)
-
         setContent {
             MaterialTheme(
                 colorScheme = lightColorScheme(
@@ -137,17 +143,101 @@ class MainActivity : ComponentActivity() {
                 )
             ) {
                 // Determine start destination based on Auth state
-                // If logged in -> Check Profile. If not -> Login.
                 val startDest = if (auth.currentUser != null) "check_profile" else "login"
-                MainApp(nearbyManager, auth, db, startDest)
+                MainApp(auth, db, startDest)
             }
         }
     }
 }
 
+// --- COMPASS HELPER ---
+@Composable
+fun CompassEffect(
+    onAzimuthChanged: (Float) -> Unit
+) {
+    val context = LocalContext.current
+    DisposableEffect(Unit) {
+        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        val magnetometer = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
+
+        val listener = object : SensorEventListener {
+            var gravity: FloatArray? = null
+            var geomagnetic: FloatArray? = null
+
+            override fun onSensorChanged(event: SensorEvent?) {
+                if (event?.sensor?.type == Sensor.TYPE_ACCELEROMETER) gravity = event.values
+                if (event?.sensor?.type == Sensor.TYPE_MAGNETIC_FIELD) geomagnetic = event.values
+
+                if (gravity != null && geomagnetic != null) {
+                    val R = FloatArray(9)
+                    val I = FloatArray(9)
+                    if (SensorManager.getRotationMatrix(R, I, gravity, geomagnetic)) {
+                        val orientation = FloatArray(3)
+                        SensorManager.getOrientation(R, orientation)
+                        val azimuth = Math.toDegrees(orientation[0].toDouble()).toFloat()
+                        onAzimuthChanged(azimuth)
+                    }
+                }
+            }
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+
+        sensorManager.registerListener(listener, accelerometer, SensorManager.SENSOR_DELAY_UI)
+        sensorManager.registerListener(listener, magnetometer, SensorManager.SENSOR_DELAY_UI)
+
+        onDispose {
+            sensorManager.unregisterListener(listener)
+        }
+    }
+}
+
+// --- LOCATION HELPER ---
+@SuppressLint("MissingPermission")
+fun getLastKnownLocation(context: Context): Location? {
+    val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+    val providers = locationManager.getProviders(true)
+    var bestLocation: Location? = null
+    for (provider in providers) {
+        val l = locationManager.getLastKnownLocation(provider) ?: continue
+        if (bestLocation == null || l.accuracy < bestLocation.accuracy) {
+            bestLocation = l
+        }
+    }
+    return bestLocation
+}
+
+// Helper: Check if GPS/Location Service is ON
+fun isLocationEnabled(context: Context): Boolean {
+    val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+    return locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+            locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+}
+
+// Helper: Check Permissions
+fun hasRequiredPermissions(context: Context): Boolean {
+    val permissions = mutableListOf<String>()
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        permissions.add(Manifest.permission.BLUETOOTH_SCAN)
+        permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE)
+        permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+    }
+    permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+    permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+
+    for (perm in permissions) {
+        if (ContextCompat.checkSelfPermission(context, perm) != PackageManager.PERMISSION_GRANTED) {
+            return false
+        }
+    }
+    return true
+}
+
 @Composable
 fun MainApp(
-    nearbyManager: NearbyManager,
     auth: FirebaseAuth,
     db: FirebaseFirestore,
     startDestination: String
@@ -155,8 +245,6 @@ fun MainApp(
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
-
-    // Screens that should NOT show the bottom navigation bar
     val hideBottomBarRoutes = listOf("login", "setup_profile", "check_profile")
 
     Scaffold(
@@ -189,24 +277,19 @@ fun MainApp(
         }
     ) { padding ->
         NavHost(navController, startDestination = startDestination, Modifier.padding(padding)) {
-            // 1. ROUTING LOGIC SCREEN (Invisible to user usually)
             composable("check_profile") {
                 LaunchedEffect(Unit) {
                     val user = auth.currentUser
                     if (user != null) {
-                        // Check if user doc exists in Firestore
                         db.collection("users").document(user.uid).get()
                             .addOnSuccessListener { document ->
                                 if (document.exists()) {
-                                    // User exists, go to Feed
                                     navController.navigate("feed") { popUpTo("check_profile") { inclusive = true } }
                                 } else {
-                                    // No profile found, force Setup
                                     navController.navigate("setup_profile") { popUpTo("check_profile") { inclusive = true } }
                                 }
                             }
                             .addOnFailureListener {
-                                // On offline/error, default to setup just in case to avoid dead ends
                                 navController.navigate("setup_profile") { popUpTo("check_profile") { inclusive = true } }
                             }
                     } else {
@@ -217,37 +300,25 @@ fun MainApp(
                     CircularProgressIndicator(color = BrandOrange)
                 }
             }
-
-            // 2. LOGIN SCREEN
             composable("login") {
                 LoginScreen(auth) {
-                    // Go to check profile to route correctly
                     navController.navigate("check_profile") { popUpTo("login") { inclusive = true } }
                 }
             }
-
-            // 3. SETUP PROFILE SCREEN
             composable("setup_profile") {
                 SetupProfileScreen(auth, db) {
                     navController.navigate("feed") { popUpTo("setup_profile") { inclusive = true } }
                 }
             }
-
-            // 4. MAIN APP SCREENS
             composable("feed") { FeedScreen() }
-            composable("proximity") { ProximityScreen(nearbyManager) }
+            composable("proximity") { ProximityScreen() }
             composable("profile") { ProfileScreen(auth, db, navController) }
         }
     }
 }
 
-// --- SCREEN: SETUP PROFILE ---
 @Composable
-fun SetupProfileScreen(
-    auth: FirebaseAuth,
-    db: FirebaseFirestore,
-    onSetupComplete: () -> Unit
-) {
+fun SetupProfileScreen(auth: FirebaseAuth, db: FirebaseFirestore, onSetupComplete: () -> Unit) {
     var name by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var isSaving by remember { mutableStateOf(false) }
@@ -258,56 +329,29 @@ fun SetupProfileScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // Setup permission launcher for location
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
+    val locationPermissionLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) { isGranted ->
         if (isGranted) {
-            // If granted after request, try saving again immediately
             isSaving = true
             scope.launch {
                 val uid = auth.currentUser!!.uid
                 val googlePhoto = auth.currentUser?.photoUrl.toString()
-                // Fetch location string
                 val locationString = getCityCountry(context)
-
-                saveUserToFirestore(
-                    db, uid, name, googlePhoto, description, selectedTags, locationString, onSetupComplete
-                )
+                saveUserToFirestore(db, uid, name, googlePhoto, description, selectedTags, locationString, onSetupComplete)
             }
         } else {
-            Toast.makeText(context, "Location permission needed to auto-detect city", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Location permission needed for auto-detect", Toast.LENGTH_SHORT).show()
             isSaving = false
         }
     }
 
-    // Pre-fill name from Google Auth - ALWAYS use this
-    LaunchedEffect(Unit) {
-        auth.currentUser?.displayName?.let { name = it }
-    }
+    LaunchedEffect(Unit) { auth.currentUser?.displayName?.let { name = it } }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
+    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Setup Profile", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = BrandOrange)
-        Spacer(Modifier.height(8.dp))
-        Text("Complete your account details.", color = Color.Gray)
-
         Spacer(Modifier.height(32.dp))
 
-        // Display Google Avatar (Read-only)
         val photoUrl = auth.currentUser?.photoUrl
-        Box(
-            Modifier
-                .size(100.dp)
-                .clip(CircleShape)
-                .background(Color.LightGray),
-            contentAlignment = Alignment.Center
-        ) {
+        Box(Modifier.size(100.dp).clip(CircleShape).background(Color.LightGray), contentAlignment = Alignment.Center) {
             if (photoUrl != null) {
                 AsyncImage(
                     model = photoUrl,
@@ -326,23 +370,10 @@ fun SetupProfileScreen(
         }
 
         Spacer(Modifier.height(24.dp))
-
-        // Name Display (Read Only)
-        Text(
-            text = name.ifEmpty { "User" },
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            color = Color.Black
-        )
-        Text(
-            text = "Name provided by Google",
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray
-        )
+        Text(text = name.ifEmpty { "User" }, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(text = "Name provided by Google", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
 
         Spacer(Modifier.height(24.dp))
-
-        // Description Field
         OutlinedTextField(
             value = description,
             onValueChange = { description = it },
@@ -352,26 +383,21 @@ fun SetupProfileScreen(
         )
 
         Spacer(Modifier.height(24.dp))
-
         Text("Interests", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Start))
-        Spacer(Modifier.height(8.dp))
 
+        Spacer(Modifier.height(8.dp))
         @OptIn(ExperimentalLayoutApi::class)
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             availableTags.forEach { tag ->
                 val isSelected = selectedTags.contains(tag)
                 FilterChip(
                     selected = isSelected,
-                    onClick = {
-                        if (isSelected) selectedTags.remove(tag) else selectedTags.add(tag)
-                    },
+                    onClick = { if (isSelected) selectedTags.remove(tag) else selectedTags.add(tag) },
                     label = { Text(tag) },
-                    leadingIcon = if (isSelected) {
-                        { Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp)) }
-                    } else null,
+                    leadingIcon = if (isSelected) { { Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp)) } } else null,
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = BrandOrange.copy(alpha = 0.2f),
                         selectedLabelColor = BrandOrange
@@ -388,22 +414,15 @@ fun SetupProfileScreen(
             Button(
                 onClick = {
                     if (name.isNotEmpty()) {
-                        // Check location permission
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
                             isSaving = true
                             scope.launch {
                                 val uid = auth.currentUser!!.uid
                                 val googlePhoto = auth.currentUser?.photoUrl.toString()
-
-                                // Fetch location string in background
                                 val locationString = getCityCountry(context)
-
-                                saveUserToFirestore(
-                                    db, uid, name, googlePhoto, description, selectedTags, locationString, onSetupComplete
-                                )
+                                saveUserToFirestore(db, uid, name, googlePhoto, description, selectedTags, locationString, onSetupComplete)
                             }
                         } else {
-                            // Request Permission
                             locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
                         }
                     } else {
@@ -419,19 +438,16 @@ fun SetupProfileScreen(
     }
 }
 
-// Helper to get readable location (City, Country)
 @SuppressLint("MissingPermission")
 suspend fun getCityCountry(context: Context): String {
     return withContext(Dispatchers.IO) {
         try {
             val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-            // Check permissions again just in case
             if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
                 ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                 return@withContext "Unknown Location"
             }
 
-            // Try to get last known location
             var location: android.location.Location? = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
             if (location == null) {
                 location = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
@@ -439,11 +455,9 @@ suspend fun getCityCountry(context: Context): String {
 
             if (location != null) {
                 val geocoder = Geocoder(context, Locale.getDefault())
-                // Get 1 address result
                 val addresses = geocoder.getFromLocation(location.latitude, location.longitude, 1)
                 if (!addresses.isNullOrEmpty()) {
                     val address = addresses[0]
-                    // Return "City, Country"
                     val city = address.locality ?: address.subAdminArea ?: "Unknown City"
                     val country = address.countryName ?: ""
                     return@withContext "$city, $country"
@@ -490,13 +504,9 @@ fun saveUserToFirestore(
         }
 }
 
-// --- SCREEN: LOGIN ---
 @Composable
 fun LoginScreen(auth: FirebaseAuth, onLoginSuccess: () -> Unit) {
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var isLoading by remember { mutableStateOf(false) }
     val context = LocalContext.current
-
     val googleSignInLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -504,18 +514,10 @@ fun LoginScreen(auth: FirebaseAuth, onLoginSuccess: () -> Unit) {
         try {
             val account = task.getResult(ApiException::class.java)
             val credential = GoogleAuthProvider.getCredential(account.idToken, null)
-            isLoading = true
-            auth.signInWithCredential(credential).addOnCompleteListener { authTask ->
-                isLoading = false
-                if (authTask.isSuccessful) {
-                    onLoginSuccess()
-                } else {
-                    errorMessage = authTask.exception?.message ?: "Google Sign-In failed"
-                }
+            auth.signInWithCredential(credential).addOnCompleteListener {
+                if (it.isSuccessful) onLoginSuccess()
             }
-        } catch (e: ApiException) {
-            errorMessage = "Google Sign-In Error: ${e.statusCode}"
-        }
+        } catch (e: ApiException) { }
     }
 
     Column(
@@ -523,7 +525,6 @@ fun LoginScreen(auth: FirebaseAuth, onLoginSuccess: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        // Logo Row
         Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.DirectionsRun, null, tint = BrandOrange, modifier = Modifier.size(50.dp))
             Spacer(Modifier.width(12.dp))
@@ -533,76 +534,42 @@ fun LoginScreen(auth: FirebaseAuth, onLoginSuccess: () -> Unit) {
         }
 
         Spacer(Modifier.height(24.dp))
-
         Text("ActiveConnect", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = BrandOrange)
         Text("Connect, Play & Run Together", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
 
         Spacer(Modifier.height(48.dp))
 
-        if (errorMessage != null) {
-            Text(errorMessage!!, color = Color.Red, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(16.dp))
-        }
-
-        if (isLoading) {
-            CircularProgressIndicator(color = BrandOrange)
-        } else {
-            Button(
-                onClick = {
-                    try {
-                        val webClientId = context.getString(
-                            context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-                        )
-                        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-                            .requestIdToken(webClientId)
-                            .requestEmail()
-                            .build()
-                        val googleSignInClient = GoogleSignIn.getClient(context, gso)
-                        googleSignInLauncher.launch(googleSignInClient.signInIntent)
-                    } catch (e: Exception) {
-                        errorMessage = "Config Error: Check google-services.json"
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Text("Sign in with Google", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            }
+        Button(
+            onClick = {
+                try {
+                    val webClientId = context.getString(
+                        context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+                    )
+                    val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                        .requestIdToken(webClientId)
+                        .requestEmail()
+                        .build()
+                    val client = GoogleSignIn.getClient(context, gso)
+                    googleSignInLauncher.launch(client.signInIntent)
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Config Error", Toast.LENGTH_LONG).show()
+                }
+            },
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Text("Sign in with Google", fontSize = 18.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
 
-// --- HELPER: PERMISSIONS CHECK ---
-fun hasRequiredPermissions(context: Context): Boolean {
-    val permissions = mutableListOf<String>()
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
-    }
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        permissions.add(Manifest.permission.BLUETOOTH_SCAN)
-        permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE)
-        permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
-    }
-    permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
-    permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION)
-
-    for (perm in permissions) {
-        if (ContextCompat.checkSelfPermission(context, perm) != PackageManager.PERMISSION_GRANTED) {
-            return false
-        }
-    }
-    return true
-}
-
-// --- SCREEN: PROFILE ---
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ProfileScreen(auth: FirebaseAuth, db: FirebaseFirestore, navController: NavController) {
     val user = auth.currentUser
     var userProfile by remember { mutableStateOf<UserProfile?>(null) }
 
-    // Fetch Profile Data
     LaunchedEffect(user) {
         user?.let {
             db.collection("users").document(it.uid).get()
@@ -617,7 +584,6 @@ fun ProfileScreen(auth: FirebaseAuth, db: FirebaseFirestore, navController: NavC
     Column(
         Modifier.fillMaxSize().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        // Removed verticalArrangement to allow natural flow
     ) {
         // Avatar
         Box(Modifier.size(120.dp).clip(CircleShape).background(Color.LightGray), contentAlignment = Alignment.Center) {
@@ -636,10 +602,8 @@ fun ProfileScreen(auth: FirebaseAuth, db: FirebaseFirestore, navController: NavC
 
         Spacer(Modifier.height(24.dp))
 
-        // Name
         Text(user?.displayName ?: "Guest", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
 
-        // Location (if available)
         if (!userProfile?.location.isNullOrEmpty()) {
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -649,7 +613,6 @@ fun ProfileScreen(auth: FirebaseAuth, db: FirebaseFirestore, navController: NavC
             }
         }
 
-        // Bio / Description (if available)
         if (!userProfile?.description.isNullOrEmpty()) {
             Spacer(Modifier.height(16.dp))
             Text(
@@ -662,7 +625,6 @@ fun ProfileScreen(auth: FirebaseAuth, db: FirebaseFirestore, navController: NavC
 
         Spacer(Modifier.height(24.dp))
 
-        // Tags (if available)
         if (userProfile?.tags?.isNotEmpty() == true) {
             FlowRow(
                 horizontalArrangement = Arrangement.Center,
@@ -677,16 +639,14 @@ fun ProfileScreen(auth: FirebaseAuth, db: FirebaseFirestore, navController: NavC
                             containerColor = BrandOrange.copy(alpha = 0.1f),
                             labelColor = BrandOrange
                         ),
-                        // FIXED: Removed conflicting border call to fix type mismatch/composable error
                         border = null
                     )
                 }
             }
         }
 
-        Spacer(Modifier.weight(1f)) // Push logout to bottom
+        Spacer(Modifier.weight(1f))
 
-        // Logout Button
         Button(
             onClick = {
                 auth.signOut()
@@ -706,7 +666,6 @@ fun ProfileScreen(auth: FirebaseAuth, db: FirebaseFirestore, navController: NavC
     }
 }
 
-// --- SCREEN: FEED ---
 @Composable
 fun FeedScreen() {
     val posts = listOf(
@@ -714,13 +673,12 @@ fun FeedScreen() {
         ActivityPost(2, "Mark Thompson", Color.Magenta, "social", "5 hours ago", "Old Town, Krakow", "Coffee Break", "Catching up with old friends.", ActivityStats("1:10:00", "0.0 km", "-", "150 kcal"), listOf("Sarah"))
     )
 
-    LazyColumn(modifier = Modifier.fillMaxSize().background(LightGrayBg), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    LazyColumn(modifier = Modifier.fillMaxSize().background(LightGrayBg), contentPadding = PaddingValues(16.dp)) {
         item { Text("Activity Feed", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp)) }
         items(posts) { post -> ActivityCard(post) }
     }
 }
 
-// --- COMPONENT: ACTIVITY CARD ---
 @Composable
 fun ActivityCard(post: ActivityPost) {
     Card(colors = CardDefaults.cardColors(containerColor = Color.White), elevation = CardDefaults.cardElevation(defaultElevation = 2.dp), shape = RoundedCornerShape(12.dp)) {
@@ -729,73 +687,16 @@ fun ActivityCard(post: ActivityPost) {
                 Box(Modifier.size(40.dp).clip(CircleShape).background(post.userAvatarColor))
                 Spacer(Modifier.width(12.dp))
                 Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(post.userName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
-                        Spacer(Modifier.width(8.dp))
-                        val tagColor = if(post.activityType == "running") TagBlue else TagRed
-                        Surface(color = tagColor, shape = RoundedCornerShape(4.dp)) {
-                            Row(Modifier.padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(if(post.activityType == "running") Icons.Default.DirectionsRun else Icons.Default.Coffee, null, tint = Color.White, modifier = Modifier.size(12.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(post.activityType, color = Color.White, style = MaterialTheme.typography.labelSmall)
-                            }
-                        }
-                    }
-                    Text("${post.timeAgo} • ${post.location}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(post.userName, fontWeight = FontWeight.Bold); Text("${post.timeAgo} • ${post.location}", color = Color.Gray)
                 }
             }
             Spacer(Modifier.height(16.dp))
             Box(Modifier.height(200.dp).fillMaxWidth().clip(RoundedCornerShape(8.dp))) { OsmMapView() }
             Spacer(Modifier.height(16.dp))
             Text(post.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text(post.description, style = MaterialTheme.typography.bodyMedium, color = Color.DarkGray, modifier = Modifier.padding(vertical = 4.dp))
+            Text(post.description, color = Color.DarkGray)
             Spacer(Modifier.height(16.dp))
-            Row(Modifier.fillMaxWidth().background(StatsBg, RoundedCornerShape(8.dp)).padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                StatItem(Icons.Outlined.Timer, "Duration", post.stats.duration)
-                StatItem(Icons.Outlined.Place, "Distance", post.stats.distance)
-                StatItem(Icons.Outlined.Speed, "Pace", post.stats.pace)
-                StatItem(Icons.Outlined.LocalFireDepartment, "Calories", post.stats.calories)
-            }
-            Spacer(Modifier.height(16.dp))
-            Row(Modifier.fillMaxWidth().border(1.dp, Color(0xFFFFCCBC), RoundedCornerShape(8.dp)).background(Color(0xFFFFFBE6), RoundedCornerShape(8.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Group, null, tint = BrandOrange)
-                Spacer(Modifier.width(8.dp))
-                Column {
-                    Text("Done with", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                    Text("@markthom, @jameswil", style = MaterialTheme.typography.bodySmall, color = BrandOrange, fontWeight = FontWeight.Bold)
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-            HorizontalDivider(color = Color.LightGray.copy(alpha = 0.5f))
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                ActionIcon(Icons.Outlined.FavoriteBorder, "23")
-                ActionIcon(Icons.Outlined.ChatBubbleOutline, "5")
-                ActionIcon(Icons.Outlined.Share, "")
-            }
-        }
-    }
-}
-
-@Composable
-fun StatItem(icon: ImageVector, label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, modifier = Modifier.size(14.dp), tint = BrandOrange)
-            Spacer(Modifier.width(4.dp))
-            Text(label, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-        }
-        Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-fun ActionIcon(icon: ImageVector, count: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = Color.Gray)
-        if (count.isNotEmpty()) {
-            Spacer(Modifier.width(4.dp))
-            Text(count, style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+            Row(Modifier.fillMaxWidth().border(1.dp, Color(0xFFFFCCBC), RoundedCornerShape(8.dp)).background(Color(0xFFFFFBE6), RoundedCornerShape(8.dp)).padding(12.dp)) { Icon(Icons.Default.Group, null, tint = BrandOrange); Spacer(Modifier.width(8.dp)); Text("Done with Friends", color = BrandOrange) }
         }
     }
 }
@@ -803,105 +704,163 @@ fun ActionIcon(icon: ImageVector, count: String) {
 @Composable
 fun OsmMapView() {
     val context = LocalContext.current
-    AndroidView(
-        factory = {
-            MapView(it).apply {
-                setTileSource(TileSourceFactory.MAPNIK)
-                setMultiTouchControls(true)
-                controller.setZoom(15.0)
-                controller.setCenter(GeoPoint(50.0647, 19.9450))
-            }
-        },
-        modifier = Modifier.fillMaxSize()
-    )
+    AndroidView(factory = { MapView(it).apply { setTileSource(TileSourceFactory.MAPNIK); controller.setZoom(15.0); controller.setCenter(GeoPoint(50.0, 19.0)) } }, modifier = Modifier.fillMaxSize())
 }
 
-// --- SCREEN: PROXIMITY (Offline Connect) ---
+// --- SCREEN: PROXIMITY (UPDATED WITH COMPASS & STATUS FIX) ---
 @Composable
-fun ProximityScreen(nearbyManager: NearbyManager) {
+fun ProximityScreen() {
     var isSearching by remember { mutableStateOf(false) }
+    var connectionStatus by remember { mutableStateOf("Ready to connect") }
+
+    // Triggers the GPS exchange when set
+    var connectedEndpointId by remember { mutableStateOf<String?>(null) }
+
+    // Compass / Location State
+    var myAzimuth by remember { mutableFloatStateOf(0f) }
+    var targetBearing by remember { mutableStateOf<Float?>(null) }
+    var targetDistance by remember { mutableStateOf<Float?>(null) }
+
     val context = LocalContext.current
 
-    // PERMISSION LAUNCHER
-    val permissionsToRequest = remember {
-        mutableListOf<String>().apply {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                add(Manifest.permission.NEARBY_WIFI_DEVICES)
+    // Listen to device compass
+    CompassEffect { azimuth ->
+        myAzimuth = azimuth
+    }
+
+    // Initialize Manager locally with BOTH callbacks
+    val nearbyManager = remember {
+        NearbyManager(
+            context = context,
+            onStatusUpdate = { status -> connectionStatus = status },
+            onLocationReceived = { lat, lng ->
+                // Logic to handle receiving a friend's location
+                val myLoc = getLastKnownLocation(context)
+                if (myLoc != null) {
+                    val targetLoc = Location("target").apply { latitude = lat; longitude = lng }
+                    val bearing = myLoc.bearingTo(targetLoc)
+                    val distance = myLoc.distanceTo(targetLoc)
+
+                    // Update state to switch UI to Compass Mode
+                    targetBearing = bearing
+                    targetDistance = distance
+                    connectionStatus = "Friend found! ${distance.roundToInt()}m away"
+
+                    // Stop the radar spinner since we found them
+                    isSearching = false
+                } else {
+                    connectionStatus = "Friend loc received (waiting for GPS...)"
+                }
+            },
+            onConnected = { endpointId ->
+                // Set this state to trigger the LaunchedEffect below
+                connectedEndpointId = endpointId
             }
+        )
+    }
+
+    // AUTOMATICALLY SEND LOCATION ON CONNECTION
+    LaunchedEffect(connectedEndpointId) {
+        connectedEndpointId?.let { endpointId ->
+            val myLoc = getLastKnownLocation(context)
+            if (myLoc != null) {
+                // Send my coordinates to the connected friend
+                nearbyManager.sendLocation(myLoc.latitude, myLoc.longitude, endpointId)
+                connectionStatus = "Sent Location. Waiting for friend..."
+            } else {
+                connectionStatus = "Connected, but GPS unavailable!"
+            }
+        }
+    }
+
+    DisposableEffect(Unit) { onDispose { nearbyManager.stopAll() } }
+
+    val permissionsToRequest = remember {
+        mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ).apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.NEARBY_WIFI_DEVICES)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 add(Manifest.permission.BLUETOOTH_SCAN)
                 add(Manifest.permission.BLUETOOTH_ADVERTISE)
                 add(Manifest.permission.BLUETOOTH_CONNECT)
             }
-            add(Manifest.permission.ACCESS_FINE_LOCATION)
-            add(Manifest.permission.ACCESS_COARSE_LOCATION)
         }.toTypedArray()
     }
 
-    val launcher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val allGranted = permissions.values.all { it }
-        if (allGranted) {
-            isSearching = true
-            val randomUser = "User-${(1000..9999).random()}"
-            nearbyManager.startAdvertising(randomUser)
-            nearbyManager.startDiscovery()
-        } else {
-            Toast.makeText(context, "Permissions required to connect!", Toast.LENGTH_LONG).show()
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { perms ->
+        if (perms.values.all { it }) {
+            if (!isLocationEnabled(context)) {
+                context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            } else {
+                isSearching = true
+                connectionStatus = "Starting..."
+                val randomUser = "User-${(1000..9999).random()}"
+                nearbyManager.startAdvertising(randomUser)
+                nearbyManager.startDiscovery()
+            }
         }
     }
 
-    Column(
-        Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
+    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+
+        // --- COMPASS / RADAR UI ---
         Box(contentAlignment = Alignment.Center) {
-            if (isSearching) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(160.dp),
-                    color = BrandOrange.copy(alpha = 0.3f),
-                    strokeWidth = 8.dp
+            if (isSearching && targetBearing == null) {
+                // Searching Animation (Radar)
+                CircularProgressIndicator(modifier = Modifier.size(200.dp), color = BrandOrange.copy(alpha = 0.3f), strokeWidth = 8.dp)
+                Icon(Icons.Default.Radar, null, modifier = Modifier.size(80.dp), tint = BrandOrange)
+            } else if (targetBearing != null) {
+                // COMPASS MODE: Arrow points to friend
+                // Calculate rotation: Target Bearing - Device Azimuth
+                val rotation = (targetBearing!! - myAzimuth).let { if (it < 0) it + 360 else it }
+
+                Icon(
+                    Icons.Default.Navigation, // Arrow Icon
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(200.dp)
+                        .rotate(rotation),
+                    tint = BrandOrange
                 )
-                CircularProgressIndicator(
-                    modifier = Modifier.size(130.dp),
-                    color = BrandOrange,
-                    strokeWidth = 2.dp
+
+                // Distance Text Overlay
+                Text(
+                    "${targetDistance?.roundToInt()}m",
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.align(Alignment.BottomCenter).offset(y = 80.dp)
                 )
+            } else {
+                // Idle State
+                Icon(Icons.Default.Radar, null, modifier = Modifier.size(80.dp), tint = Color.Gray)
             }
-            Icon(
-                Icons.Default.Radar,
-                null,
-                modifier = Modifier.size(80.dp),
-                tint = if(isSearching) BrandOrange else Color.Gray
-            )
         }
 
-        Spacer(Modifier.height(32.dp))
+        Spacer(Modifier.height(100.dp))
 
         Text(
-            if (isSearching) "Searching for Activity..." else "Connect Offline",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
-
-        Text(
-            if (isSearching) "Looking for a nearby partner. Keep the app open."
-            else "Click to automatically connect with the first available person near you.",
+            text = connectionStatus,
             textAlign = TextAlign.Center,
-            color = Color.Gray,
-            modifier = Modifier.padding(top = 8.dp, bottom = 48.dp)
+            color = if (connectionStatus.contains("Connected") || targetBearing != null) BrandOrange else Color.Gray,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 32.dp)
         )
 
-        if (!isSearching) {
+        if (!isSearching && targetBearing == null) {
             Button(
                 onClick = {
                     if (hasRequiredPermissions(context)) {
-                        isSearching = true
-                        val randomUser = "User-${(1000..9999).random()}"
-                        nearbyManager.startAdvertising(randomUser)
-                        nearbyManager.startDiscovery()
+                        if (!isLocationEnabled(context)) {
+                            context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                        } else {
+                            isSearching = true
+                            connectionStatus = "Starting..."
+                            val randomUser = "User-${(1000..9999).random()}"
+                            nearbyManager.startAdvertising(randomUser)
+                            nearbyManager.startDiscovery()
+                        }
                     } else {
                         launcher.launch(permissionsToRequest)
                     }
@@ -916,6 +875,9 @@ fun ProximityScreen(nearbyManager: NearbyManager) {
             OutlinedButton(
                 onClick = {
                     isSearching = false
+                    targetBearing = null
+                    targetDistance = null
+                    connectedEndpointId = null // Reset connection state
                     nearbyManager.stopAll()
                 },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
