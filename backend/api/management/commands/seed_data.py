@@ -1,41 +1,43 @@
 from django.core.management.base import BaseCommand
 from firebase_admin import firestore
-from api import views
 import random
 
 db = firestore.client()
 
 
 class Command(BaseCommand):
-    help = "Insert sample activities + users + likes + comments for the new schema"
+    help = "Insert sample activities based on existing Firebase users"
 
     def handle(self, *args, **kwargs):
 
         # ============================================================
-        # 1️⃣ USERS — Create fake users
+        # 1️⃣ USERS — Pobierz istniejących użytkowników z Firestore
         # ============================================================
 
-        fake_users = [
-            {"uid": "alice", "display_name": "Alice Doe", "city": "Warsaw"},
-            {"uid": "bob", "display_name": "Bob Green", "city": "Kraków"},
-            {"uid": "charlie", "display_name": "Charlie Red", "city": "Gdańsk"},
-            {"uid": "david", "display_name": "David Black", "city": "Wrocław"},
-            {"uid": "eve", "display_name": "Eve White", "city": "Poznań"},
-        ]
+        users_ref = db.collection("users").stream()
+        users = []
 
+        for doc in users_ref:
+            data = doc.to_dict()
+            if "uid" in data and "displayName" in data:
+                users.append({
+                    "uid": data["uid"],
+                    "display_name": data.get("displayName", "Unknown"),
+                    "city": (
+                        data.get("location")
+                        if isinstance(data.get("location"), str)
+                        else None
+                    )
+                })
+
+        if not users:
+            self.stdout.write(self.style.ERROR("Brak użytkowników w Firestore!"))
+            return
+
+        self.stdout.write(self.style.SUCCESS(f"Załadowano {len(users)} użytkowników!"))
+
+        # Lista tagów do losowania
         example_tags = ["fitness", "outdoor", "coffee", "friends", "study", "gym", "run"]
-
-        for u in fake_users:
-            db.collection("users").document(u["uid"]).set({
-                "uid": u["uid"],
-                "display_name": u["display_name"],
-                "city": u["city"],
-                "tags": random.sample(example_tags, random.randint(1, 3)),
-                "description": f"Hi, I'm {u['display_name']}",
-                "created_at": firestore.SERVER_TIMESTAMP,
-            })
-
-        self.stdout.write(self.style.SUCCESS("Fake users added!"))
 
         # ============================================================
         # 2️⃣ ACTIVITIES — Generate sample activities
@@ -53,6 +55,7 @@ class Command(BaseCommand):
         ]
 
         city_locations = {
+            "Gliwice": {"lat": 50.2945, "lng": 18.6714},
             "Warsaw": {"lat": 52.22, "lng": 21.01},
             "Poznań": {"lat": 52.4064, "lng": 16.9252},
             "Kraków": {"lat": 50.0647, "lng": 19.9450},
@@ -60,20 +63,24 @@ class Command(BaseCommand):
             "Gdańsk": {"lat": 54.3520, "lng": 18.6466},
         }
 
-        # Generate 15 activities
+        # Jeśli jakiś użytkownik nie ma miasta → ustaw domyślne
+        DEFAULT_CITY = "Gliwice"
+
         for _ in range(15):
 
             # Pick participants (at least 1)
-            selected_users = random.sample(fake_users, random.randint(1, 3))
+            selected_users = random.sample(users, random.randint(1, 3))
             participants = [u["uid"] for u in selected_users]
 
-            # Choose activity template and tags
             template = random.choice(sample_activity_templates)
             tags = random.sample(example_tags, random.randint(1, 3))
 
-            # City = city of first participant
-            first_city = selected_users[0]["city"]
-            location = city_locations.get(first_city, city_locations["Warsaw"])
+            # City = city of first participant OR fallback
+            user_city = selected_users[0].get("city")
+            if user_city is None or user_city == "Unknown Location":
+                user_city = DEFAULT_CITY
+
+            location = city_locations.get(user_city.split(",")[0], city_locations[DEFAULT_CITY])
 
             activity_ref = db.collection("activities").document()
             activity_ref.set({
@@ -86,10 +93,8 @@ class Command(BaseCommand):
                 "time_end": None,
             })
 
-            activity_id = activity_ref.id
-
             # ---------- Likes ----------
-            like_users = random.sample(fake_users, random.randint(0, len(fake_users)))
+            like_users = random.sample(users, random.randint(0, len(users)))
             for u in like_users:
                 activity_ref.collection("likes").document(u["uid"]).set({
                     "user_id": u["uid"],
@@ -98,7 +103,7 @@ class Command(BaseCommand):
                 })
 
             # ---------- Comments ----------
-            comment_users = random.sample(fake_users, random.randint(0, 5))
+            comment_users = random.sample(users, random.randint(0, 5))
             for u in comment_users:
                 activity_ref.collection("comments").add({
                     "user_id": u["uid"],
@@ -108,7 +113,8 @@ class Command(BaseCommand):
                 })
 
             self.stdout.write(self.style.SUCCESS(
-                f"Activity {activity_id}: {len(participants)} participants"
+                f"Activity {activity_ref.id}: {len(participants)} participants"
             ))
 
-        self.stdout.write(self.style.SUCCESS("Sample data generation complete!"))
+        self.stdout.write(self.style.SUCCESS("Sample activity generation complete!"))
+

@@ -9,13 +9,15 @@ import { MoreHorizontal, Loader2, AlertCircle, Moon, Sun, Eye, Monitor } from 'l
 import Sidebar from './components/Sidebar';
 import ActivityCard from './components/ActivityCard';
 import Login from './components/Login';
-import Onboarding from './components/OnBoarding';
+import Onboarding from './components/Onboarding';
 import Profile from './components/Profile';
+import Explore from './components/Explore'; // <--- IMPORTUJEMY KOMPONENT
 
-import { mockPosts } from './lib/mockdata';
+import { mockPosts } from './lib/mockData';
 import type { ActivityPost } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minut
 
 type View = 'feed' | 'explore' | 'profile' | 'notifications' | 'settings';
 
@@ -27,10 +29,12 @@ function App() {
   const [posts, setPosts] = useState<ActivityPost[]>([]);
   const [isFeedLoading, setIsFeedLoading] = useState(false);
   const [usingOfflineData, setUsingOfflineData] = useState(false);
+  const [lastFeedFetch, setLastFeedFetch] = useState<number>(0);
 
   const [currentView, setCurrentView] = useState<View>('feed');
+  
+  const [profileTargetUid, setProfileTargetUid] = useState<string | null>(null);
 
-  // --- THEME STATE ---
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
   const [isHighContrast, setIsHighContrast] = useState(() => localStorage.getItem('contrast') === 'true');
 
@@ -68,6 +72,10 @@ function App() {
 
   useEffect(() => {
     if (user && !showOnboarding && currentView === 'feed') {
+      const now = Date.now();
+      if (posts.length > 0 && (now - lastFeedFetch < CACHE_DURATION)) {
+        return;
+      }
       fetchFeed();
     }
   }, [user, showOnboarding, currentView]);
@@ -88,7 +96,11 @@ function App() {
     });
   };
 
-  const fetchFeed = async () => {
+  const fetchFeed = async (forceRefresh = false) => {
+    if (!forceRefresh && posts.length > 0 && (Date.now() - lastFeedFetch < CACHE_DURATION)) {
+        return;
+    }
+
     setIsFeedLoading(true);
     setUsingOfflineData(false);
 
@@ -115,6 +127,7 @@ function App() {
            const mappedPosts: ActivityPost[] = data.feed.map((item: any) => ({
                 id: item.id,
                 user: {
+                    id: item.participants && item.participants[0] ? item.participants[0] : 'unknown',
                     name: item.participants && item.participants.includes(user?.uid) 
                           ? user?.displayName || "You" 
                           : `User ${item.participants?.[0]?.slice(0, 4) || 'Unknown'}`,
@@ -140,6 +153,7 @@ function App() {
                 }
            }));
            setPosts(mappedPosts);
+           setLastFeedFetch(Date.now());
         }
 
     } catch (error) {
@@ -156,6 +170,18 @@ function App() {
     setCurrentView('feed');
   };
 
+  const handleSidebarNavigate = (view: View) => {
+      if (view === 'profile') {
+          setProfileTargetUid(null);
+      }
+      setCurrentView(view);
+  };
+
+  const handleUserClick = (uid: string) => {
+      setProfileTargetUid(uid);
+      setCurrentView('profile');
+  };
+
   if (authLoading) {
     return (
       <div className="h-screen flex items-center justify-center bg-gray-50">
@@ -169,10 +195,7 @@ function App() {
 
   return (
     <div className={`flex min-h-screen font-sans transition-colors duration-200 ${isDarkMode ? 'dark-mode bg-gray-900 text-gray-100' : 'bg-gray-50 text-gray-900'} ${isHighContrast ? 'high-contrast' : ''}`}>
-      
-      {/* GLOBALNE STYLE DLA TRYBÓW (Wstrzyknięte dynamicznie) */}
       <style>{`
-        /* DARK MODE OVERRIDES */
         .dark-mode .bg-white { background-color: #1f2937 !important; color: #f3f4f6 !important; }
         .dark-mode .bg-gray-50 { background-color: #111827 !important; }
         .dark-mode .text-gray-900 { color: #f3f4f6 !important; }
@@ -181,8 +204,6 @@ function App() {
         .dark-mode .border-gray-100, .dark-mode .border-gray-200 { border-color: #374151 !important; }
         .dark-mode .hover\\:bg-gray-50:hover { background-color: #374151 !important; }
         .dark-mode input { background-color: #374151 !important; color: white !important; border-color: #4b5563 !important; }
-
-        /* HIGH CONTRAST OVERRIDES (Black & Yellow) */
         .high-contrast { filter: contrast(120%); }
         .high-contrast .bg-white, .high-contrast .bg-gray-50 { background-color: #000000 !important; }
         .high-contrast, .high-contrast h1, .high-contrast h2, .high-contrast h3, .high-contrast p, .high-contrast span, .high-contrast div { color: #FFFF00 !important; }
@@ -194,12 +215,12 @@ function App() {
 
       <Sidebar 
         currentView={currentView} 
-        onNavigate={setCurrentView}
+        onNavigate={handleSidebarNavigate} 
+        onCreateActivity={() => {}} 
       />
       
       <main className="flex-1 md:ml-64 p-4 md:p-8">
         <div className="max-w-2xl mx-auto">
-          {/* Mobile Header */}
           <div className="md:hidden flex items-center justify-between mb-6">
             <h1 className="text-xl font-bold">
               Active<span className="text-teal-500">Connect</span>
@@ -234,7 +255,11 @@ function App() {
               ) : (
                 <div className="space-y-6">
                     {posts.map((post) => (
-                      <ActivityCard key={post.id} post={post} />
+                      <ActivityCard 
+                        key={post.id} 
+                        post={post} 
+                        onUserClick={handleUserClick} 
+                      />
                     ))}
                     
                     {posts.length === 0 && !isFeedLoading && (
@@ -247,33 +272,30 @@ function App() {
             </>
           )}
 
+          {/* NOWE: Wyświetlamy komponent Explore zamiast tekstu "Coming Soon" */}
           {currentView === 'explore' && (
-             <div className="text-center py-20 text-gray-400">Explore Coming Soon</div>
+             <Explore onUserClick={handleUserClick} />
           )}
 
           {currentView === 'profile' && (
-            <Profile />
+            <Profile targetUid={profileTargetUid} />
           )}
 
           {currentView === 'notifications' && (
              <div className="text-center py-20 text-gray-400">Notifications Coming Soon</div>
           )}
 
-          {/* SETTINGS VIEW */}
           {currentView === 'settings' && (
             <div className="space-y-6">
-              <h1 className="text-3xl font-bold mb-8">Settings</h1>
-              
-              <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+               <h1 className="text-3xl font-bold mb-8">Settings</h1>
+               
+               <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                 <div className="p-6 border-b border-gray-100">
                   <h2 className="text-lg font-bold flex items-center gap-2">
                     <Monitor size={20} className="text-teal-500"/> Display & Accessibility
                   </h2>
-                  <p className="text-gray-500 text-sm mt-1">Customize your viewing experience</p>
                 </div>
-                
                 <div className="p-6 space-y-6">
-                  {/* Dark Mode Toggle */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600'}`}>
@@ -281,18 +303,12 @@ function App() {
                       </div>
                       <div>
                         <div className="font-medium">Dark Mode</div>
-                        <div className="text-sm text-gray-500">Easier on the eyes in low light</div>
                       </div>
                     </div>
-                    <button 
-                      onClick={() => setIsDarkMode(!isDarkMode)}
-                      className={`relative w-14 h-7 rounded-full transition-colors duration-300 focus:outline-none ${isDarkMode ? 'bg-teal-500' : 'bg-gray-300'}`}
-                    >
+                    <button onClick={() => setIsDarkMode(!isDarkMode)} className={`relative w-14 h-7 rounded-full transition-colors duration-300 ${isDarkMode ? 'bg-teal-500' : 'bg-gray-300'}`}>
                       <span className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full shadow-md transform transition-transform duration-300 ${isDarkMode ? 'translate-x-7' : 'translate-x-0'}`} />
                     </button>
                   </div>
-
-                  {/* High Contrast Toggle */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className={`p-2 rounded-lg ${isHighContrast ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-600'}`}>
@@ -300,13 +316,9 @@ function App() {
                       </div>
                       <div>
                         <div className="font-medium">High Contrast</div>
-                        <div className="text-sm text-gray-500">Increases contrast for better visibility (Yellow/Black)</div>
                       </div>
                     </div>
-                    <button 
-                      onClick={() => setIsHighContrast(!isHighContrast)}
-                      className={`relative w-14 h-7 rounded-full transition-colors duration-300 focus:outline-none ${isHighContrast ? 'bg-teal-500' : 'bg-gray-300'}`}
-                    >
+                    <button onClick={() => setIsHighContrast(!isHighContrast)} className={`relative w-14 h-7 rounded-full transition-colors duration-300 ${isHighContrast ? 'bg-teal-500' : 'bg-gray-300'}`}>
                       <span className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full shadow-md transform transition-transform duration-300 ${isHighContrast ? 'translate-x-7' : 'translate-x-0'}`} />
                     </button>
                   </div>
