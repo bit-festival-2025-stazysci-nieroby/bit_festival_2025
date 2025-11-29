@@ -1,0 +1,92 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+# Built application files
+*.apk
+*.ap_
+*.aab
+
+# ART/Dalvik VM files
+*.dex
+
+# Java/Kotlin class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+build/
+captures/
+output.json
+
+# Gradle files
+.gradle/
+local.properties
+.gradle/
+**/build/
+!gradle-wrapper.jar
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+.idea/caches
+.idea/libraries
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+
+# Kotlin
+*.kotlin_module
+*.kotlin_metadata
+
+# Log files
+*.log
+
+# Android-specific
+.gradle/
+app/debug/
+app/release/
+.fastlane/
+navigation.json
+
+# Jetpack Compose
+*.sketch
+*.compose-model.json
+
+# NDK
+obj/
+*.so
+
+# Keystore files (DONT COMMIT YOUR RELEASE KEY!)
+*.jks
+*.keystore
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local configuration files
+local.properties
+
+# Firebase
+google-services.json
+GoogleService-Info.plist
+
+# Misc
+.env
