@@ -27,13 +27,10 @@ const Explore = () => {
     setLoading(true);
     setError(null);
     try {
-      // Pobieramy dane z Twojego backendu Django
       const response = await fetch(`${API_URL}/api/activities/by-tag/?tag=${tag}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          // Opcjonalnie: jeśli backend wymaga autoryzacji nawet dla GET
-          // 'Authorization': `Bearer ${await auth.currentUser?.getIdToken()}`
         }
       });
 
@@ -42,13 +39,9 @@ const Explore = () => {
       }
 
       const data = await response.json();
-      
-      // Transformacja danych z backendu (płaska struktura) na format ActivityCard (zagnieżdżona struktura)
-      // Backend zwraca: { activities: [{ id, tags, description, location, timestamp, participants... }] }
+  
       const mappedActivities: ActivityPost[] = data.activities.map((item: any) => ({
         id: item.id,
-        // Backend na razie nie zwraca pełnego usera, więc musimy to zamockować lub pobrać osobno.
-        // Dla celów demo tworzymy placeholder.
         user: {
             name: item.participants && item.participants.length > 0 ? "User " + item.participants[0].slice(0, 5) : "Unknown User",
             avatar: `https://ui-avatars.com/api/?name=${item.participants?.[0] || 'User'}&background=random`,
@@ -58,8 +51,8 @@ const Explore = () => {
         timestamp: item.timestamp ? new Date(item.timestamp).toLocaleString() : 'Recently',
         title: item.tags?.join(', ') || 'Activity',
         description: item.description || 'No description provided.',
-        image: undefined, // Backend na razie nie obsługuje zdjęć
-        stats: undefined, // Backend na razie nie zwraca statystyk
+        image: undefined,
+        stats: undefined, 
         social: {
             likes: item.likes_count || 0,
             comments: item.comments_count || 0,

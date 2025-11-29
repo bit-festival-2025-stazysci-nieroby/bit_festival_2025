@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { doc, getDoc, setDoc, deleteDoc, serverTimestamp, collection, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, serverTimestamp, collection, onSnapshot, getDocs, query, limit } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
-import { MapPin, Calendar, Tag, Edit3, Loader2, UserPlus, Check, UserMinus } from 'lucide-react';
+import { MapPin, Calendar, Tag, Edit3, Loader2, UserPlus, Check, UserMinus, X, ChevronRight } from 'lucide-react';
 
 interface UserProfileData {
+  uid?: string; // dodane pole
   displayName: string;
   email: string;
   photoURL: string;
@@ -14,22 +15,22 @@ interface UserProfileData {
 
 interface ProfileProps {
   targetUid?: string | null;
+  onUserClick?: (uid: string) => void;
 }
 
-const Profile = ({ targetUid }: ProfileProps) => {
+const Profile = ({ targetUid, onUserClick = () => {} }: ProfileProps) => {
   const [profile, setProfile] = useState<UserProfileData | null>(null);
   const [loading, setLoading] = useState(true);
-  
-  // Stany followersów
   const [isFollowing, setIsFollowing] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
   const [followersCount, setFollowersCount] = useState(0);
   const [followingCount, setFollowingCount] = useState(0);
+  const [activeList, setActiveList] = useState<'followers' | 'following' | null>(null);
+  const [listUsers, setListUsers] = useState<UserProfileData[]>([]);
+  const [listLoading, setListLoading] = useState(false);
   
   const isOwnProfile = !targetUid || (auth.currentUser && targetUid === auth.currentUser.uid);
   const uidToFetch = targetUid || auth.currentUser?.uid;
-
-  // 1. Pobieranie danych profilu
   useEffect(() => {
     const fetchProfile = async () => {
       if (!uidToFetch) return;
@@ -40,10 +41,11 @@ const Profile = ({ targetUid }: ProfileProps) => {
         const docSnap = await getDoc(docRef);
 
         if (docSnap.exists()) {
-          setProfile(docSnap.data() as UserProfileData);
+          setProfile({ uid: docSnap.id, ...docSnap.data() } as UserProfileData);
         } else {
             if (isOwnProfile && auth.currentUser) {
                 setProfile({
+                    uid: auth.currentUser.uid,
                     displayName: auth.currentUser.displayName || 'User',
                     email: auth.currentUser.email || '',
                     photoURL: auth.currentUser.photoURL || '',
@@ -63,42 +65,70 @@ const Profile = ({ targetUid }: ProfileProps) => {
     fetchProfile();
   }, [uidToFetch, isOwnProfile]);
 
-  // 2. Sprawdzanie czy obserwujemy (TERAZ AUTOMATYCZNIE ODŚWIEŻANE)
   useEffect(() => {
     if (!auth.currentUser || !uidToFetch || isOwnProfile) return;
 
-    // Używamy onSnapshot, aby status przycisku aktualizował się w czasie rzeczywistym
     const unsubscribe = onSnapshot(doc(db, "users", auth.currentUser.uid, "following", uidToFetch), 
       (docSnap) => {
         setIsFollowing(docSnap.exists());
       },
-      (error) => {
-        console.error("Error checking follow status:", error);
-      }
+      (error) => console.error("Error checking follow:", error)
     );
 
     return () => unsubscribe();
   }, [uidToFetch, isOwnProfile]);
 
-  // 3. Liczniki Followers/Following (Real-time)
   useEffect(() => {
     if (!uidToFetch) return;
 
-    // Nasłuchuj kolekcji 'followers' tego użytkownika
-    const followersUnsub = onSnapshot(collection(db, "users", uidToFetch, "followers"), (snap) => {
-        setFollowersCount(snap.size);
-    });
-
-    // Nasłuchuj kolekcji 'following' tego użytkownika
-    const followingUnsub = onSnapshot(collection(db, "users", uidToFetch, "following"), (snap) => {
-        setFollowingCount(snap.size);
-    });
+    const followersUnsub = onSnapshot(collection(db, "users", uidToFetch, "followers"), (snap) => setFollowersCount(snap.size));
+    const followingUnsub = onSnapshot(collection(db, "users", uidToFetch, "following"), (snap) => setFollowingCount(snap.size));
 
     return () => {
         followersUnsub();
         followingUnsub();
     };
   }, [uidToFetch]);
+  useEffect(() => {
+    const fetchListUsers = async () => {
+        if (!activeList || !uidToFetch) return;
+        
+        setListLoading(true);
+        setListUsers([]);
+
+        try {
+            const listRef = collection(db, "users", uidToFetch, activeList);
+            const q = query(listRef, limit(20));
+            const querySnapshot = await getDocs(q);
+            
+            const userIds = querySnapshot.docs.map(doc => doc.id);
+
+            if (userIds.length === 0) {
+                setListUsers([]);
+                return;
+            }
+            const userPromises = userIds.map(id => getDoc(doc(db, "users", id)));
+            const userSnaps = await Promise.all(userPromises);
+
+            const usersData: UserProfileData[] = [];
+            userSnaps.forEach(snap => {
+                if (snap.exists()) {
+                    usersData.push({ uid: snap.id, ...snap.data() } as UserProfileData);
+                }
+            });
+
+            setListUsers(usersData);
+
+        } catch (error) {
+            console.error(`Error fetching ${activeList}:`, error);
+        } finally {
+            setListLoading(false);
+        }
+    };
+
+    fetchListUsers();
+  }, [activeList, uidToFetch]);
+
 
   const handleToggleFollow = async () => {
       if (!auth.currentUser || !uidToFetch) return;
@@ -109,22 +139,27 @@ const Profile = ({ targetUid }: ProfileProps) => {
 
       try {
           if (isFollowing) {
-              // UNFOLLOW
               await deleteDoc(doc(db, "users", myId, "following", targetId));
               await deleteDoc(doc(db, "users", targetId, "followers", myId));
-              // Stan isFollowing zaktualizuje się sam dzięki onSnapshot w useEffect
           } else {
-              // FOLLOW
               await setDoc(doc(db, "users", myId, "following", targetId), { timestamp: serverTimestamp() });
               await setDoc(doc(db, "users", targetId, "followers", myId), { timestamp: serverTimestamp() });
-              // Stan isFollowing zaktualizuje się sam dzięki onSnapshot w useEffect
           }
       } catch (error) {
           console.error("Error toggling follow:", error);
-          alert("Update Security Rules in Firebase Console to allow following!");
+          alert("Permission error. Check console.");
       } finally {
           setFollowLoading(false);
       }
+  };
+
+  const openList = (type: 'followers' | 'following') => {
+      setActiveList(type);
+  };
+
+  const handleListUserClick = (uid: string) => {
+      setActiveList(null);
+      onUserClick(uid); 
   };
 
   if (loading) {
@@ -135,10 +170,53 @@ const Profile = ({ targetUid }: ProfileProps) => {
     );
   }
 
-  if (!profile) return <div className="text-center py-20 text-gray-500">User not found</div>;
+  if (!profile) return <div className="text-center py-20 text-gray-500 dark:text-gray-400">User not found</div>;
 
   return (
-    <div className="max-w-2xl mx-auto animate-in fade-in duration-500">
+    <div className="max-w-2xl mx-auto animate-in fade-in duration-500 relative">
+      
+      {/* MODAL LISTY UŻYTKOWNIKÓW */}
+      {activeList && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setActiveList(null)}>
+            <div className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+                <div className="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800/50">
+                    <h3 className="font-bold text-lg capitalize text-gray-900 dark:text-white">{activeList}</h3>
+                    <button onClick={() => setActiveList(null)} className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-500 dark:text-gray-400">
+                        <X size={20} />
+                    </button>
+                </div>
+                
+                <div className="overflow-y-auto p-2 flex-1">
+                    {listLoading ? (
+                        <div className="flex justify-center py-8"><Loader2 className="animate-spin text-teal-500" /></div>
+                    ) : listUsers.length > 0 ? (
+                        <div className="space-y-1">
+                            {listUsers.map(u => (
+                                <div 
+                                    key={u.uid} 
+                                    onClick={() => u.uid && handleListUserClick(u.uid)}
+                                    className="flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-xl cursor-pointer transition-colors group"
+                                >
+                                    <img src={u.photoURL} alt={u.displayName} className="w-10 h-10 rounded-full object-cover border border-gray-100 dark:border-gray-600" />
+                                    <div className="flex-1">
+                                        <div className="font-bold text-gray-900 dark:text-white text-sm">{u.displayName}</div>
+                                        <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{u.email}</div>
+                                    </div>
+                                    <ChevronRight size={16} className="text-gray-300 dark:text-gray-600 group-hover:text-teal-500 transition-colors" />
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="text-center py-8 text-gray-400 dark:text-gray-500 text-sm">
+                            No users found in this list.
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* HEADER PROFILU */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-6 dark:bg-gray-800 dark:border-gray-700">
         <div className={`h-32 bg-gradient-to-r ${isOwnProfile ? 'from-teal-400 to-blue-500' : 'from-orange-400 to-pink-500'}`}></div>
 
@@ -151,7 +229,7 @@ const Profile = ({ targetUid }: ProfileProps) => {
             />
             
             {isOwnProfile ? (
-              <button className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 cursor-pointer dark:bg-gray-700 dark:text-gray-200">
+              <button className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 cursor-pointer dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600">
                 <Edit3 size={16} />
                 Edit Profile
               </button>
@@ -169,8 +247,7 @@ const Profile = ({ targetUid }: ProfileProps) => {
                     <Loader2 size={16} className="animate-spin" />
                 ) : isFollowing ? (
                     <>
-                        <span className="group-hover:hidden flex items-center gap-2"><Check size={16} /> Following</span>
-                        <span className="hidden group-hover:flex items-center gap-2"><UserMinus size={16} /> Unfollow</span>
+                        <Check size={16} /> Following
                     </>
                 ) : (
                     <>
@@ -185,16 +262,22 @@ const Profile = ({ targetUid }: ProfileProps) => {
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{profile.displayName}</h1>
             <p className="text-gray-500 mb-4 dark:text-gray-400">{isOwnProfile ? profile.email : `@${profile.displayName.toLowerCase().replace(/\s/g, '')}`}</p>
 
-            {/* Stats Row */}
+            {/* STATYSTYKI KLIKALNE */}
             <div className="flex gap-6 mb-6 border-y border-gray-100 py-4 dark:border-gray-700">
-                <div className="flex items-center gap-2">
-                    <span className="font-bold text-gray-900 dark:text-white text-lg">{followersCount}</span>
+                <button 
+                    onClick={() => openList('followers')}
+                    className="flex items-center gap-2 group hover:opacity-80 transition-opacity cursor-pointer"
+                >
+                    <span className="font-bold text-gray-900 dark:text-white text-lg group-hover:text-teal-500 transition-colors">{followersCount}</span>
                     <span className="text-gray-500 text-sm dark:text-gray-400">Followers</span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <span className="font-bold text-gray-900 dark:text-white text-lg">{followingCount}</span>
+                </button>
+                <button 
+                    onClick={() => openList('following')}
+                    className="flex items-center gap-2 group hover:opacity-80 transition-opacity cursor-pointer"
+                >
+                    <span className="font-bold text-gray-900 dark:text-white text-lg group-hover:text-teal-500 transition-colors">{followingCount}</span>
                     <span className="text-gray-500 text-sm dark:text-gray-400">Following</span>
-                </div>
+                </button>
             </div>
 
             <div className="flex flex-wrap gap-4 text-sm text-gray-500 mb-2 dark:text-gray-400">

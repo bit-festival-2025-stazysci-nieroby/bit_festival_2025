@@ -36,7 +36,6 @@ function App() {
   const [profileTargetUid, setProfileTargetUid] = useState<string | null>(null);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
 
-  // --- THEME STATE ---
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
   const [isHighContrast, setIsHighContrast] = useState(() => localStorage.getItem('contrast') === 'true');
 
@@ -199,14 +198,12 @@ function App() {
   if (showOnboarding) return <Onboarding onComplete={handleOnboardingComplete} />;
 
   return (
-    // Główny kontener - tutaj dodajemy klasę 'dark' i 'high-contrast'
     <div className={`flex min-h-screen font-sans transition-colors duration-200 ${isDarkMode ? 'dark' : ''} ${isHighContrast ? 'high-contrast' : ''}`}>
       
       {currentView !== 'activity_detail' && (
         <Sidebar 
             currentView={currentView} 
             onNavigate={handleSidebarNavigate} 
-            onCreateActivity={() => {}} 
         />
       )}
       
@@ -269,7 +266,8 @@ function App() {
 
           {currentView === 'explore' && <Explore onUserClick={handleUserClick} />}
 
-          {currentView === 'profile' && <Profile targetUid={profileTargetUid} />}
+          {/* TUTAJ ZMIANA: Przekazujemy onUserClick */}
+          {currentView === 'profile' && <Profile targetUid={profileTargetUid} onUserClick={handleUserClick} />}
 
           {currentView === 'activity_detail' && selectedActivityId && (
              <ActivityDetail 

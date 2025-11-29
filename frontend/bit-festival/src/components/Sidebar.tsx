@@ -7,10 +7,9 @@ type View = 'feed' | 'explore' | 'profile' | 'notifications' | 'settings';
 interface SidebarProps {
   currentView: View;
   onNavigate: (view: View) => void;
-  onCreateActivity: () => void;
 }
 
-const Sidebar = ({ currentView, onNavigate, onCreateActivity }: SidebarProps) => {
+const Sidebar = ({ currentView, onNavigate}: SidebarProps) => {
   const menuItems: { icon: any; label: string; id: View }[] = [
     { icon: Home, label: 'Feed', id: 'feed' },
     { icon: Compass, label: 'Explore', id: 'explore' },
@@ -28,21 +27,12 @@ const Sidebar = ({ currentView, onNavigate, onCreateActivity }: SidebarProps) =>
   };
 
   return (
-    // Dodano klasy dark:
     <div className="w-64 h-screen bg-white dark:bg-gray-800 border-r border-gray-100 dark:border-gray-700 flex flex-col p-6 fixed left-0 top-0 hidden md:flex z-50 transition-colors">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-800 dark:text-white">
           Active<span className="text-teal-500">Connect</span>
         </h1>
       </div>
-
-      <button 
-        onClick={onCreateActivity}
-        className="w-full bg-teal-500 hover:bg-teal-600 text-white font-bold py-3 px-4 rounded-xl shadow-lg shadow-teal-200 dark:shadow-none transition-all mb-8 flex items-center justify-center gap-2 cursor-pointer transform hover:scale-[1.02]"
-      >
-        <PlusCircle size={20} />
-        New Activity
-      </button>
 
       <nav className="space-y-2 flex-1">
         {menuItems.map((item) => (

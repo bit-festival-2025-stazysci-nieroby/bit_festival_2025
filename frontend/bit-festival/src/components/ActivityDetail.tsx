@@ -18,7 +18,6 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(0);
 
-  // 1. Pobieranie danych aktywności
   useEffect(() => {
     const fetchActivity = async () => {
       try {
@@ -27,13 +26,11 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
 
         if (docSnap.exists()) {
           const data = docSnap.data();
-          // Mapowanie danych z Firestore na nasz typ ActivityPost
-          // (Uproszczone mapowanie, w produkcji warto wydzielić do helpera)
           const mappedPost: any = {
             id: docSnap.id,
             user: {
                 id: data.participants?.[0] || 'unknown',
-                name: "Loading...", // Nazwę można by pobrać z osobnego fetch'a userów
+                name: "Loading...",
                 avatar: `https://ui-avatars.com/api/?name=${data.participants?.[0] || 'U'}&background=random&color=fff`,
                 location: data.location ? "Checked in" : ""
             },
@@ -41,18 +38,12 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
             timestamp: data.time_start ? new Date(data.time_start.toDate()).toLocaleString() : '',
             title: data.description ? "Activity Details" : "Activity",
             description: data.description || "",
-            image: data.image, // Jeśli masz obsługę obrazków
+            image: data.image, 
             stats: {
                 duration: "Active",
-                distance: "-",
-                pace: "-",
-                calories: "-"
             },
             social: { likes: 0, comments: 0 }
           };
-          
-          // Szybka poprawka na nazwę usera (pobranie z pola display name jeśli istnieje w act)
-          // W twoim modelu danych user name jest w 'users', tu robimy fallback
           if(data.participants && data.participants.length > 0) {
              const userDoc = await getDoc(doc(db, "users", data.participants[0]));
              if(userDoc.exists()) {
@@ -72,8 +63,6 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
 
     fetchActivity();
   }, [activityId]);
-
-  // 2. Nasłuchiwanie komentarzy (Real-time)
   useEffect(() => {
     const q = query(collection(db, "activities", activityId, "comments"), orderBy("timestamp", "asc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -83,7 +72,6 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
     return () => unsubscribe();
   }, [activityId]);
 
-  // 3. Nasłuchiwanie lajków (Real-time)
   useEffect(() => {
     const q = query(collection(db, "activities", activityId, "likes"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -173,18 +161,6 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
              <div>
                 <div className="text-gray-400 text-xs uppercase font-bold mb-1 flex items-center gap-1"><Clock size={12}/> Duration</div>
                 <div className="text-xl font-bold text-gray-900 dark:text-white">{post.stats?.duration || "-"}</div>
-             </div>
-             <div>
-                <div className="text-gray-400 text-xs uppercase font-bold mb-1 flex items-center gap-1"><MapPin size={12}/> Distance</div>
-                <div className="text-xl font-bold text-gray-900 dark:text-white">{post.stats?.distance || "-"}</div>
-             </div>
-             <div>
-                <div className="text-gray-400 text-xs uppercase font-bold mb-1 flex items-center gap-1"><Timer size={12}/> Pace</div>
-                <div className="text-xl font-bold text-gray-900 dark:text-white">{post.stats?.pace || "-"}</div>
-             </div>
-             <div>
-                <div className="text-gray-400 text-xs uppercase font-bold mb-1 flex items-center gap-1"><Flame size={12}/> Calories</div>
-                <div className="text-xl font-bold text-gray-900 dark:text-white">{post.stats?.calories || "-"}</div>
              </div>
           </div>
 
