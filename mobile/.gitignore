@@ -17,6 +17,7 @@ local.properties
 *.apk
 *.ap_
 *.aab
+google-services.json
 
 # ART/Dalvik VM files
 *.dex
