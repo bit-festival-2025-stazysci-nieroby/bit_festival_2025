@@ -73,6 +73,18 @@ def sync_offline_activity(request):
 # -------------------------
 def get_feed(request):
     try:
+        # --- Optional: get UID from token (for user_liked flag) ---
+        uid = None
+        auth_header = request.headers.get("Authorization")
+        if auth_header:
+            try:
+                token = auth_header.split(" ")[1]
+                decoded = auth.verify_id_token(token)
+                uid = decoded["uid"]
+            except:
+                uid = None  # Feed still loads for guests
+
+        # --- Fetch activities ---
         docs = (
             db.collection("activities")
             .order_by("timestamp", direction=firestore.Query.DESCENDING)
@@ -81,20 +93,78 @@ def get_feed(request):
         )
 
         feed = []
+
         for doc in docs:
             act = doc.to_dict()
+            activity_id = doc.id
+
+            # Convert timestamp
             ts = act.get("timestamp")
             if ts:
                 ts = ts.isoformat()
 
+            # -----------------------
+            # COUNT LIKES
+            # -----------------------
+            likes_ref = db.collection("activities").document(activity_id).collection("likes").stream()
+            likes_list = list(likes_ref)
+            likes_count = len(likes_list)
+
+            # Did USER like?
+            user_liked = False
+            if uid:
+                for like in likes_list:
+                    if like.id == uid:
+                        user_liked = True
+                        break
+
+            # -----------------------
+            # COUNT COMMENTS
+            # -----------------------
+            comments_ref = (
+                db.collection("activities")
+                .document(activity_id)
+                .collection("comments")
+                .order_by("timestamp", direction=firestore.Query.DESCENDING)
+                .limit(1)
+                .stream()
+            )
+
+            comments_list = list(comments_ref)
+            comments_count = (
+                db.collection("activities")
+                .document(activity_id)
+                .collection("comments")
+                .count()
+                .get()
+                .value
+            )
+
+            last_comment = None
+            if comments_list:
+                c = comments_list[0].to_dict()
+                last_comment = {
+                    "user_id": c.get("user_id"),
+                    "text": c.get("text")
+                }
+
+            # -----------------------
+            # BUILD FEED ITEM
+            # -----------------------
             feed.append({
-                "id": doc.id,
+                "id": activity_id,
                 "type": act.get("type"),
                 "location": act.get("location"),
                 "participants": act.get("participants"),
                 "tags": act.get("tags"),
                 "timestamp": ts,
-                "comment": act.get("user_comment", "")
+                "comment": act.get("user_comment", ""),
+
+                # NEW:
+                "likes_count": likes_count,
+                "comments_count": comments_count,
+                "user_liked": user_liked,
+                "last_comment": last_comment,
             })
 
         return JsonResponse({"feed": feed})
@@ -102,6 +172,7 @@ def get_feed(request):
     except Exception as e:
         print(f"[ERROR] get_feed: {e}")
         return JsonResponse({"error": str(e)}, status=500)
+
 
 
 
