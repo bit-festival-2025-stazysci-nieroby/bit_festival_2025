@@ -418,31 +418,24 @@ def user_add_tag(request, uid, tag):
         return JsonResponse({"error": str(e)}, status=500)
 
 
-@csrf_exempt
-def user_add_tags(request, uid):
+def user_add_tags(request, uid, tags):
     if request.method != "POST":
-        return JsonResponse({"error": "POST only"}, status=405)
+        return JsonResponse({"error": "Only POST allowed"}, status=405)
 
-    try:
-        data = json.loads(request.body)
-        tags = data.get("tags", [])
+    # tags = "fitness,outdoor,coffee"
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
 
-        if not isinstance(tags, list):
-            return JsonResponse({"error": "'tags' must be a list"}, status=400)
+    user_ref = db.collection("users").document(uid)
+    user_doc = user_ref.get()
 
-        cleaned = [t for t in tags if isinstance(t, str) and t.strip()]
+    if not user_doc.exists:
+        return JsonResponse({"error": "User not found"}, status=404)
 
-        if not cleaned:
-            return JsonResponse({"error": "No valid tags"}, status=400)
+    user_ref.update({
+        "tags": firestore.ArrayUnion(tag_list)
+    })
 
-        db.collection("users").document(uid).update({
-            "tags": firestore.ArrayUnion(cleaned)
-        })
-
-        return JsonResponse({"status": "tags_added", "tags": cleaned})
-
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    return JsonResponse({"status": "tags_added", "tags": tag_list})
 
 
 @csrf_exempt

@@ -51,6 +51,6 @@ urlpatterns = [
 
     # User tag modification (UPDATED)
     path("api/user/<str:uid>/add-tag/<str:tag>/", user_add_tag),
-    path("api/user/<str:uid>/add-tags/", user_add_tags),
+    path("api/user/<str:uid>/add-tags/<str:tags>/", user_add_tags), 
     path("api/user/<str:uid>/remove-tag/<str:tag>/", user_remove_tag),
 ]
