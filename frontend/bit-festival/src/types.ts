@@ -11,10 +11,19 @@ export interface ActivityStats {
   calories: string;
 }
 
+export interface CommentData {
+  user_id: string;
+  user_display_name: string;
+  text: string;
+  timestamp: string;
+}
+
 export interface SocialData {
   likes: number;
   comments: number;
   taggedUsers?: string[];
+  userLiked?: boolean; // Nowe pole
+  lastComment?: CommentData | null; // Nowe pole
 }
 
 export interface ActivityPost {

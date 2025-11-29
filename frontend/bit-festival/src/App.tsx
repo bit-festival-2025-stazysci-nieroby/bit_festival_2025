@@ -4,15 +4,15 @@ import type { User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 
 import { auth, db } from './lib/firebase';
-import { MoreHorizontal, Loader2, AlertCircle } from 'lucide-react';
+import { MoreHorizontal, Loader2, AlertCircle, Plus } from 'lucide-react';
 
 import Sidebar from './components/Sidebar';
 import ActivityCard from './components/ActivityCard';
 import Login from './components/Login';
-import Onboarding from './components/Onboarding';
+import Onboarding from './components/OnBoarding';
 import Profile from './components/Profile';
 
-import { mockPosts } from './lib/mockData';
+import { mockPosts } from './lib/mockdata';
 import type { ActivityPost } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
@@ -91,7 +91,7 @@ function App() {
                 id: item.id,
                 user: {
                     name: item.participants && item.participants.includes(user?.uid) 
-                          ? "You" 
+                          ? user?.displayName || "You" 
                           : `User ${item.participants?.[0]?.slice(0, 4) || 'Unknown'}`,
                     avatar: `https://ui-avatars.com/api/?name=${item.participants?.[0] || 'U'}&background=random&color=fff`,
                     location: item.location ? "Checked in" : "Unknown Location"
@@ -109,7 +109,9 @@ function App() {
                 social: {
                     likes: item.likes_count || 0,
                     comments: item.comments_count || 0,
-                    taggedUsers: []
+                    taggedUsers: [],
+                    userLiked: item.user_liked, 
+                    lastComment: item.last_comment
                 }
            }));
            setPosts(mappedPosts);
@@ -127,6 +129,11 @@ function App() {
   const handleOnboardingComplete = () => {
     setShowOnboarding(false);
     setCurrentView('feed');
+  };
+
+  const handleCreateSuccess = () => {
+    fetchFeed(); 
+    setCurrentView('feed'); 
   };
 
   if (authLoading) {
@@ -147,34 +154,42 @@ function App() {
 
   return (
     <div className="flex min-h-screen bg-gray-50 font-sans">
-      <Sidebar currentView={currentView} onNavigate={setCurrentView} />
+      <Sidebar 
+        currentView={currentView} 
+        onNavigate={setCurrentView} 
+      />
       
       <main className="flex-1 md:ml-64 p-4 md:p-8">
         <div className="max-w-2xl mx-auto">
+          {/* Mobile Header with Create Button */}
           <div className="md:hidden flex items-center justify-between mb-6">
             <h1 className="text-xl font-bold text-gray-800">
               Active<span className="text-teal-500">Connect</span>
             </h1>
-            <button className="p-2 text-gray-600">
-              <MoreHorizontal size={24} />
-            </button>
+            <div className="flex gap-2">
+              <button className="p-2 text-gray-600">
+                <MoreHorizontal size={24} />
+              </button>
+            </div>
           </div>
 
           {currentView === 'feed' && (
             <>
-              <div className="mb-8">
-                <h1 className="text-3xl font-bold text-gray-900">Activity Feed</h1>
-                <p className="text-gray-500 mt-1">
-                  Welcome back, {user.displayName?.split(' ')[0] || 'User'}! 
-                </p>
-                
-                {usingOfflineData && (
-                    <div className="mt-4 bg-amber-50 border border-amber-100 text-amber-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
+              <div className="mb-8 flex justify-between items-end">
+                <div>
+                    <h1 className="text-3xl font-bold text-gray-900">Activity Feed</h1>
+                    <p className="text-gray-500 mt-1">
+                    Welcome back, {user.displayName?.split(' ')[0] || 'User'}! 
+                    </p>
+                </div>
+              </div>
+              
+              {usingOfflineData && (
+                    <div className="mt-4 mb-6 bg-amber-50 border border-amber-100 text-amber-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
                         <AlertCircle size={16} />
-                        <span>Showing local demo data.</span>
+                        <span>Backend unreachable. Showing local demo data.</span>
                     </div>
                 )}
-              </div>
               
               {isFeedLoading ? (
                   <div className="flex justify-center py-20">
@@ -188,7 +203,7 @@ function App() {
                     
                     {posts.length === 0 && !isFeedLoading && (
                         <div className="text-center py-20 text-gray-400 bg-white rounded-xl border border-dashed border-gray-200">
-                          <p>No activities found.</p>
+                          <p>No activities found. Start moving!</p>
                         </div>
                     )}
                 </div>
@@ -210,7 +225,6 @@ function App() {
               <p>This section is coming soon!</p>
             </div>
           )}
-
         </div>
       </main>
     </div>
