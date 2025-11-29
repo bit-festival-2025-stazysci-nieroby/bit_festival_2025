@@ -240,6 +240,101 @@ def comment_activity(request, activity_id):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+
+def list_comments(request, activity_id):
+    try:
+        docs = (
+            db.collection("activities")
+            .document(activity_id)
+            .collection("comments")
+            .order_by("timestamp", direction=firestore.Query.DESCENDING)
+            .stream()
+        )
+
+        comments = []
+        for d in docs:
+            c = d.to_dict()
+            ts = c.get("timestamp")
+            if ts:
+                ts = ts.isoformat()
+
+            comments.append({
+                "id": d.id,
+                "user_id": c.get("user_id"),
+                "text": c.get("text"),
+                "timestamp": ts
+            })
+
+        return JsonResponse({"comments": comments})
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+
+# ---------------------------
+# 2. UNLIKE
+# ---------------------------
+@csrf_exempt
+def unlike_activity(request, activity_id):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST only"}, status=405)
+
+    try:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return JsonResponse({"error": "Missing token"}, status=401)
+
+        token = auth_header.split(" ")[1]
+        uid = auth.verify_id_token(token)["uid"]
+
+        like_ref = db.collection("activities").document(activity_id)\
+                     .collection("likes").document(uid)
+
+        like_ref.delete()
+
+        return JsonResponse({"status": "unliked"})
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+
+# ---------------------------
+# 3. DELETE COMMENT
+# ---------------------------
+@csrf_exempt
+def delete_comment(request, activity_id, comment_id):
+    if request.method != "DELETE":
+        return JsonResponse({"error": "DELETE only"}, status=405)
+
+    try:
+        # verify firebase token
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return JsonResponse({"error": "Missing token"}, status=401)
+
+        token = auth_header.split(" ")[1]
+        uid = auth.verify_id_token(token)["uid"]
+
+        comment_ref = db.collection("activities").document(activity_id)\
+                        .collection("comments").document(comment_id)
+
+        comment_doc = comment_ref.get()
+
+        if not comment_doc.exists:
+            return JsonResponse({"error": "Comment not found"}, status=404)
+
+        if comment_doc.to_dict().get("user_id") != uid:
+            return JsonResponse({"error": "Unauthorized"}, status=403)
+
+        comment_ref.delete()
+
+        return JsonResponse({"status": "comment_deleted"})
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
 # -------------------------
 # 3. FIRESTORE CONNECTIVITY TEST
 # -------------------------
