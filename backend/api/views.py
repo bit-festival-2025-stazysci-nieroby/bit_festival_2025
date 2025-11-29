@@ -399,6 +399,41 @@ def user_add_tag(request):
 
 
 @csrf_exempt
+def user_add_tags(request):
+    """
+    POST: add multiple tags to current user.
+    Body: { "tags": ["fitness", "coffee", "friends"] }
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "POST only"}, status=405)
+
+    uid, error = get_uid_from_request(request)
+    if error:
+        return error
+
+    try:
+        data = json.loads(request.body)
+        tags = data.get("tags")
+
+        if not tags or not isinstance(tags, list):
+            return JsonResponse({"error": "Missing or invalid 'tags' list"}, status=400)
+
+        # Remove empty strings
+        cleaned = [t for t in tags if isinstance(t, str) and t.strip()]
+        if not cleaned:
+            return JsonResponse({"error": "No valid tags"}, status=400)
+
+        db.collection("users").document(uid).update({
+            "tags": firestore.ArrayUnion(cleaned)
+        })
+
+        return JsonResponse({"status": "tags_added", "tags": cleaned})
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
 def user_remove_tag(request):
     """POST: remove a tag from current user. Body: { "tag": "fitness" }"""
     if request.method != "POST":

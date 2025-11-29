@@ -19,6 +19,7 @@ from api.views import (
     activities_by_tags_any,
     activities_by_tags_all,
     user_add_tag,
+    user_add_tags,
     user_remove_tag,
 )
 
@@ -47,5 +48,6 @@ urlpatterns = [
 
     # User tag modification
     path("api/user/add-tag/", user_add_tag),
+    path("api/user/add-tags/", user_add_tags),
     path("api/user/remove-tag/", user_remove_tag),
 ]
