@@ -965,6 +965,9 @@ fun ProximityScreen(auth: FirebaseAuth, db: FirebaseFirestore) {
 
     val context = LocalContext.current
 
+    var friendName by remember { mutableStateOf("Friend") }
+    var friendUid by remember { mutableStateOf("") }
+
     // 1. Compass
     CompassEffect { azimuth -> myAzimuth = azimuth }
 
@@ -981,6 +984,8 @@ fun ProximityScreen(auth: FirebaseAuth, db: FirebaseFirestore) {
         if (loc != null && friendLoc != null) {
             val dist = loc.distanceTo(friendLoc)
             val bear = loc.bearingTo(friendLoc)
+            val myUid = auth.currentUser?.uid ?: ""
+            val myName = auth.currentUser?.displayName ?: "User"
 
             targetDistance = dist
             targetBearing = bear
@@ -999,16 +1004,14 @@ fun ProximityScreen(auth: FirebaseAuth, db: FirebaseFirestore) {
 
     val nearbyManager = remember {
         NearbyManager(
-            context = context,
-            onStatusUpdate = { status -> connectionStatus = status },
-            onLocationReceived = { lat, lng ->
-                // Friend sent their location
-                val fLoc = Location("friend").apply { latitude = lat; longitude = lng }
-                friendLocation = fLoc
+            context,
+            { connectionStatus = it },
+            { lat, lng, uid, name -> // Updated Callback
+                friendLocation = Location("friend").apply { latitude = lat; longitude = lng }
+                friendUid = uid
+                friendName = name
             },
-            onConnected = { endpointId ->
-                connectedEndpointId = endpointId
-            }
+            { id -> connectedEndpointId = id }
         )
     }
 
@@ -1017,7 +1020,14 @@ fun ProximityScreen(auth: FirebaseAuth, db: FirebaseFirestore) {
         val loc = myLocation
         if (connectedEndpointId != null && loc != null) {
             while(true) {
-                nearbyManager.sendLocation(loc.latitude, loc.longitude, connectedEndpointId!!)
+                val myUid = auth.currentUser?.uid ?: "unknown_uid"
+                val myName = auth.currentUser?.displayName ?: "Unknown"
+                nearbyManager.sendLocation(
+                    myLocation!!.latitude,
+                    myLocation!!.longitude,
+                    connectedEndpointId!!,
+                    myUid,
+                    myName)
                 delay(500) // Update every 500ms
             }
         }

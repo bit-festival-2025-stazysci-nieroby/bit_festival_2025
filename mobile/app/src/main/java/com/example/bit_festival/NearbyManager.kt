@@ -9,14 +9,17 @@ import java.nio.charset.StandardCharsets
 class NearbyManager(
     private val context: Context,
     private val onStatusUpdate: (String) -> Unit,
-    private val onLocationReceived: (Double, Double) -> Unit,
-    private val onConnected: (String) -> Unit // <--- NEW: Trigger to send data
+    // Updated callback signature to include UID and Name
+    private val onLocationReceived: (Double, Double, String, String) -> Unit,
+    private val onConnected: (String) -> Unit
 ) {
 
     private val STRATEGY = Strategy.P2P_CLUSTER
     private val SERVICE_ID = "com.example.bit_festival"
     private val TAG = "NearbyManager"
     private var myNickname: String = ""
+
+    // ... (startAdvertising, startDiscovery, stopAll remain unchanged) ...
 
     fun startAdvertising(nickname: String) {
         this.myNickname = nickname
@@ -55,14 +58,6 @@ class NearbyManager(
             }
     }
 
-    fun sendLocation(lat: Double, lng: Double, endpointId: String) {
-        // Format: "LOC:latitude,longitude"
-        val msg = "LOC:$lat,$lng"
-        Log.d(TAG, "Sending Location: $msg to $endpointId")
-        val bytes = msg.toByteArray(StandardCharsets.UTF_8)
-        Nearby.getConnectionsClient(context).sendPayload(endpointId, Payload.fromBytes(bytes))
-    }
-
     fun stopAll() {
         Nearby.getConnectionsClient(context).stopAdvertising()
         Nearby.getConnectionsClient(context).stopDiscovery()
@@ -70,24 +65,30 @@ class NearbyManager(
         onStatusUpdate("Ready to connect")
     }
 
+    // Updated to send UID and Name
+    fun sendLocation(lat: Double, lng: Double, endpointId: String, myUid: String, myName: String) {
+        // Format: "LOC:latitude,longitude,uid,name"
+        val msg = "LOC:$lat,$lng,$myUid,$myName"
+        Log.d(TAG, "Sending Payload: $msg to $endpointId")
+        val bytes = msg.toByteArray(StandardCharsets.UTF_8)
+        Nearby.getConnectionsClient(context).sendPayload(endpointId, Payload.fromBytes(bytes))
+    }
+
     private val connectionLifecycleCallback = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
             Log.d(TAG, "Connection initiated with ${info.endpointName}")
             onStatusUpdate("Found ${info.endpointName}! Connecting...")
-            // Always accept connection
             Nearby.getConnectionsClient(context).acceptConnection(endpointId, payloadCallback)
         }
 
         override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
             if (result.status.isSuccess) {
                 Log.d(TAG, "Connected!")
-                onStatusUpdate("Connected! Swapping GPS Data...")
+                onStatusUpdate("Connected! Swapping Data...")
 
-                // Stop discovery to save battery
                 Nearby.getConnectionsClient(context).stopAdvertising()
                 Nearby.getConnectionsClient(context).stopDiscovery()
 
-                // TRIGGER THE UI TO SEND LOCATION
                 onConnected(endpointId)
             } else {
                 onStatusUpdate("Connection failed. Retrying...")
@@ -109,15 +110,23 @@ class NearbyManager(
                 if (message.startsWith("LOC:")) {
                     try {
                         val parts = message.removePrefix("LOC:").split(",")
-                        if (parts.size == 2) {
+                        // Expecting 4 parts: lat, lng, uid, name
+                        if (parts.size >= 4) {
                             val lat = parts[0].toDouble()
                             val lng = parts[1].toDouble()
-                            // Pass the coordinates back to MainActivity
-                            onLocationReceived(lat, lng)
-                            onStatusUpdate("Target Acquired!") // Fun status update
+                            val uid = parts[2]
+                            val name = parts[3]
+
+                            onLocationReceived(lat, lng, uid, name)
+                            onStatusUpdate("Data received from $name!")
+                        } else if (parts.size == 2) {
+                            // Backwards compatibility for old format (lat, lng only)
+                            val lat = parts[0].toDouble()
+                            val lng = parts[1].toDouble()
+                            onLocationReceived(lat, lng, "unknown_uid", "Unknown Friend")
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error parsing location", e)
+                        Log.e(TAG, "Error parsing payload", e)
                     }
                 }
             }
@@ -126,10 +135,9 @@ class NearbyManager(
     }
 
     private val endpointDiscoveryCallback = object : EndpointDiscoveryCallback() {
-        override fun onEndpointFound(endpointId: String,     info: DiscoveredEndpointInfo) {
+        override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
             Log.d(TAG, "Found peer: ${info.endpointName}")
 
-            // TIE BREAKER: Only alphabetic winner requests connection
             if (myNickname > info.endpointName) {
                 onStatusUpdate("Found ${info.endpointName}. Requesting connection...")
                 Nearby.getConnectionsClient(context)
