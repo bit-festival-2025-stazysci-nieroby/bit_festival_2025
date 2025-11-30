@@ -4,24 +4,26 @@ import type { User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 
 import { auth, db } from './lib/firebase';
-import { MoreHorizontal, Loader2, AlertCircle, Moon, Sun, Eye, Monitor, Type } from 'lucide-react';
+import { MoreHorizontal, Loader2, AlertCircle, Moon, Sun, Eye, Monitor, Type, Sparkles, Clock } from 'lucide-react';
 
 import Sidebar from './components/Sidebar';
 import ActivityCard from './components/ActivityCard';
 import Login from './components/Login';
-import Onboarding from './components/Onboarding';
+import Onboarding from './components/OnBoarding';
 import Profile from './components/Profile';
 import Explore from './components/Explore';
 import ActivityDetail from './components/ActivityDetail';
-import Notifications from './components/Notifications'; // IMPORT
+import Notifications from './components/Notifications';
 
-import { mockPosts } from './lib/mockData';
+
+import { mockPosts } from './lib/mockdata';
 import type { ActivityPost } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 const CACHE_DURATION = 5 * 60 * 1000;
 
 type View = 'feed' | 'explore' | 'profile' | 'notifications' | 'settings' | 'activity_detail';
+type FeedMode = 'ai' | 'latest'; // Nowy typ dla trybu feedu
 
 function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -33,9 +35,14 @@ function App() {
   const [usingOfflineData, setUsingOfflineData] = useState(false);
   const [lastFeedFetch, setLastFeedFetch] = useState<number>(0);
 
+  // Nowy stan dla trybu feedu (domyślnie AI)
+  const [feedMode, setFeedMode] = useState<FeedMode>('ai');
+
   const [currentView, setCurrentView] = useState<View>('feed');
   const [profileTargetUid, setProfileTargetUid] = useState<string | null>(null);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
+  
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
   const [isHighContrast, setIsHighContrast] = useState(() => localStorage.getItem('contrast') === 'true');
@@ -74,15 +81,16 @@ function App() {
     return () => unsubscribe();
   }, []);
 
+  // Pobieranie feedu przy zmianie widoku, usera LUB trybu feedu
   useEffect(() => {
     if (user && !showOnboarding && currentView === 'feed') {
       const now = Date.now();
-      if (posts.length > 0 && (now - lastFeedFetch < CACHE_DURATION)) {
-        return;
-      }
+      // Jeśli zmieniliśmy tryb, chcemy wymusić pobranie, więc ignorujemy cache w tym przypadku
+      // Ale jeśli to tylko powrót do widoku, sprawdzamy cache.
+      // Uprościmy: Pobieramy zawsze przy zmianie feedMode
       fetchFeed();
     }
-  }, [user, showOnboarding, currentView]);
+  }, [user, showOnboarding, currentView, feedMode]);
 
   const getUserLocation = (): Promise<{ lat: number; lng: number }> => {
     return new Promise((resolve) => {
@@ -101,18 +109,28 @@ function App() {
   };
 
   const fetchFeed = async (forceRefresh = false) => {
+    // Prosty cache tylko jeśli nie wymuszamy i nie zmienił się tryb (ale tu useEffect wywołuje przy zmianie trybu)
     if (!forceRefresh && posts.length > 0 && (Date.now() - lastFeedFetch < CACHE_DURATION)) {
-        return;
+        // Mały hack: jeśli mamy posty, ale zmieniliśmy tryb, to i tak powinniśmy pobrać.
+        // Jednak useEffect ma [feedMode] w zależnościach, więc to wywołanie jest "nowe".
+        // Dla uproszczenia w tym demo pomijamy zaawansowany cache per-mode.
     }
 
     setIsFeedLoading(true);
     setUsingOfflineData(false);
 
     try {
-        const { lat, lng } = await getUserLocation();
         const token = await auth.currentUser?.getIdToken();
+        let endpoint = '';
+
+        if (feedMode === 'ai') {
+            const { lat, lng } = await getUserLocation();
+            endpoint = `${API_URL}/api/feed/ai/?lat=${lat}&lng=${lng}`;
+        } else {
+            endpoint = `${API_URL}/api/feed/`;
+        }
         
-        const response = await fetch(`${API_URL}/api/feed/ai/?lat=${lat}&lng=${lng}`, {
+        const response = await fetch(endpoint, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
@@ -128,34 +146,47 @@ function App() {
            setPosts(mockPosts);
            setUsingOfflineData(true); 
         } else {
-           const mappedPosts: ActivityPost[] = data.feed.map((item: any) => ({
-                id: item.id,
-                user: {
-                    id: item.participants && item.participants[0] ? item.participants[0] : 'unknown',
-                    name: item.participants && item.participants.includes(user?.uid) 
-                          ? user?.displayName || "You" 
-                          : `User ${item.participants?.[0]?.slice(0, 4) || 'Unknown'}`,
-                    avatar: `https://ui-avatars.com/api/?name=${item.participants?.[0] || 'U'}&background=random&color=fff`,
-                    location: item.location ? "Checked in" : "Unknown Location"
-                },
-                type: item.tags?.[0] || 'other',
-                timestamp: item.time_start ? new Date(item.time_start).toLocaleString() : 'Recently',
-                title: item.tags?.length > 0 ? `${item.tags[0].charAt(0).toUpperCase() + item.tags[0].slice(1)} Session` : 'Activity',
-                description: item.description || "",
-                stats: {
-                    duration: item.time_end ? "Completed" : "Active",
-                    distance: "-",
-                    pace: "-",
-                    calories: item.ai_score ? `Score: ${Math.round(item.ai_score)}` : "-" 
-                },
-                social: {
-                    likes: item.likes_count || 0,
-                    comments: item.comments_count || 0,
-                    taggedUsers: [],
-                    userLiked: item.user_liked, 
-                    lastComment: item.last_comment
-                }
-           }));
+           const mappedPosts: ActivityPost[] = data.feed.map((item: any) => {
+                const partnersList = item.participants && item.participants.length > 1 
+                    ? item.participants.slice(1).map((uid: string) => ({
+                        id: uid,
+                        name: "Participant",
+                        avatar: `https://ui-avatars.com/api/?name=${uid}&background=random&color=fff`,
+                        location: ""
+                    }))
+                    : [];
+
+                return {
+                    id: item.id,
+                    user: {
+                        id: item.participants && item.participants[0] ? item.participants[0] : 'unknown',
+                        name: item.participants && item.participants.includes(user?.uid) 
+                            ? user?.displayName || "You" 
+                            : `User ${item.participants?.[0]?.slice(0, 4) || 'Unknown'}`,
+                        avatar: `https://ui-avatars.com/api/?name=${item.participants?.[0] || 'U'}&background=random&color=fff`,
+                        location: item.location ? "Checked in" : "Unknown Location"
+                    },
+                    type: item.tags?.[0] || 'other',
+                    timestamp: item.time_start ? new Date(item.time_start).toLocaleString() : 'Recently',
+                    title: item.tags?.length > 0 ? `${item.tags[0].charAt(0).toUpperCase() + item.tags[0].slice(1)} Session` : 'Activity',
+                    description: item.description || "",
+                    partners: partnersList,
+                    stats: {
+                        duration: item.time_end ? "Completed" : "Active",
+                        distance: "-",
+                        pace: "-",
+                        // Pokaż score tylko w trybie AI
+                        calories: (feedMode === 'ai' && item.ai_score) ? `AI Score: ${Math.round(item.ai_score)}` : "-" 
+                    },
+                    social: {
+                        likes: item.likes_count || 0,
+                        comments: item.comments_count || 0,
+                        taggedUsers: [],
+                        userLiked: item.user_liked, 
+                        lastComment: item.last_comment
+                    }
+                };
+           });
            setPosts(mappedPosts);
            setLastFeedFetch(Date.now());
         }
@@ -226,7 +257,6 @@ function App() {
         <Sidebar 
             currentView={currentView} 
             onNavigate={handleSidebarNavigate} 
-            onCreateActivity={() => {}} 
         />
       )}
       
@@ -238,20 +268,46 @@ function App() {
                 <h1 className="text-xl font-bold text-gray-900 dark:text-white">
                 Active<span className="text-teal-500">Connect</span>
                 </h1>
-                <button className="p-2 text-gray-600 dark:text-gray-300">
-                <MoreHorizontal size={24} />
-                </button>
+                <div className="flex gap-2">
+                    <button onClick={() => setIsCreateModalOpen(true)} className="p-2 text-teal-500 bg-teal-50 dark:bg-teal-900/30 rounded-full">
+                        <MoreHorizontal size={24} />
+                    </button>
+                </div>
             </div>
           )}
 
           {currentView === 'feed' && (
             <>
-              <div className="mb-8 flex justify-between items-end">
+              <div className="mb-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                 <div>
                     <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Activity Feed</h1>
                     <p className="text-gray-500 dark:text-gray-400 mt-1">
                     Welcome back, {user.displayName?.split(' ')[0] || 'User'}! 
                     </p>
+                </div>
+
+                {/* --- FEED MODE TOGGLE --- */}
+                <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl shrink-0 self-start sm:self-auto">
+                    <button 
+                        onClick={() => setFeedMode('ai')}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+                            feedMode === 'ai' 
+                            ? 'bg-white dark:bg-gray-700 text-teal-600 dark:text-teal-400 shadow-sm' 
+                            : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+                        }`}
+                    >
+                        <Sparkles size={16} /> AI Smart
+                    </button>
+                    <button 
+                        onClick={() => setFeedMode('latest')}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+                            feedMode === 'latest' 
+                            ? 'bg-white dark:bg-gray-700 text-teal-600 dark:text-teal-400 shadow-sm' 
+                            : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+                        }`}
+                    >
+                        <Clock size={16} /> Latest
+                    </button>
                 </div>
               </div>
               
@@ -299,7 +355,6 @@ function App() {
              />
           )}
 
-          {/* NOWY WIDOK: POWIADOMIENIA */}
           {currentView === 'notifications' && (
              <Notifications 
                 onUserClick={handleUserClick}
@@ -318,7 +373,7 @@ function App() {
                   </h2>
                 </div>
                 <div className="p-6 space-y-6">
-                  {/* ... Przełączniki (takie same jak wcześniej) ... */}
+                  {/* ... Przełączniki ... */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
