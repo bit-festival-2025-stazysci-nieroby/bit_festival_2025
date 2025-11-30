@@ -1,79 +1,119 @@
 from django.core.management.base import BaseCommand
 from firebase_admin import firestore
-from api import views
+from datetime import datetime
+import calendar
 import random
 
 db = firestore.client()
 
-
 class Command(BaseCommand):
-    help = "Insert sample activities + users + likes + comments for the new schema"
+    help = "Generate sample activities using EXISTING users from Firestore"
 
     def handle(self, *args, **kwargs):
 
         # ============================================================
-        # 1️⃣ USERS — Create fake users
+        # 1️⃣ Read existing users from Firestore
         # ============================================================
 
-        fake_users = [
-            {"uid": "alice", "display_name": "Alice Doe", "city": "Warsaw"},
-            {"uid": "bob", "display_name": "Bob Green", "city": "Kraków"},
-            {"uid": "charlie", "display_name": "Charlie Red", "city": "Gdańsk"},
-            {"uid": "david", "display_name": "David Black", "city": "Wrocław"},
-            {"uid": "eve", "display_name": "Eve White", "city": "Poznań"},
+        real_uids = [
+            "93Lmo6O8xsc7jyCrjSOl2Bul3mP2",
+            "Y9oxKb9Vi9YE3C0K2m1gbIywYPj1",
+            "vyF9RLrDMUNGn3GWb3QE6Q3YXJo1",
         ]
 
-        example_tags = ["fitness", "outdoor", "coffee", "friends", "study", "gym", "run"]
+        real_users = []
 
-        for u in fake_users:
-            db.collection("users").document(u["uid"]).set({
-                "uid": u["uid"],
-                "display_name": u["display_name"],
-                "city": u["city"],
-                "tags": random.sample(example_tags, random.randint(1, 3)),
-                "description": f"Hi, I'm {u['display_name']}",
-                "created_at": firestore.SERVER_TIMESTAMP,
+        for uid in real_uids:
+            doc = db.collection("users").document(uid).get()
+
+            if not doc.exists:
+                self.stdout.write(self.style.ERROR(f"USER NOT FOUND: {uid}"))
+                continue
+
+            data = doc.to_dict()
+
+            # ---- SAFE LOCATION HANDLING ----
+            location_field = data.get("location")
+
+            if isinstance(location_field, dict):
+                city = location_field.get("city", "Warsaw")
+            elif isinstance(location_field, str):
+                city = location_field
+            else:
+                city = "Warsaw"
+
+            real_users.append({
+                "uid": uid,
+                "display_name": data.get("displayName") or "",
+                "city": city,
             })
 
-        self.stdout.write(self.style.SUCCESS("Fake users added!"))
+        if not real_users:
+            self.stdout.write(self.style.ERROR("No existing users found."))
+            return
+
+        self.stdout.write(self.style.SUCCESS("Loaded existing users!"))
+
 
         # ============================================================
-        # 2️⃣ ACTIVITIES — Generate sample activities
+        # 2️⃣ NEW Activity templates
         # ============================================================
 
         sample_activity_templates = [
-            {"type": "workout", "description": "Morning workout 💪"},
-            {"type": "coffee", "description": "Coffee break ☕"},
-            {"type": "walk", "description": "Evening walk 🌆"},
-            {"type": "study", "description": "Studying for exams 📚"},
-            {"type": "hangout", "description": "Group hangout 🎉"},
-            {"type": "run", "description": "Running together 🏃‍♂️"},
-            {"type": "gym", "description": "Gym session 🏋️"},
-            {"type": "work", "description": "Work & chill 💻"},
+            {"type": "cinema", "description": "Going to the cinema 🎬"},
+            {"type": "dinner", "description": "Dinner at a restaurant 🍽️"},
+            {"type": "shopping", "description": "Shopping time 🛍️"},
+            {"type": "boardgames", "description": "Board game evening 🎲"},
+            {"type": "gym", "description": "Strength workout 💪"},
+            {"type": "run", "description": "Morning run 🏃‍♀️"},
+            {"type": "coffee", "description": "Coffee meetup ☕"},
+            {"type": "museum", "description": "Visiting a museum 🖼️"},
+            {"type": "study", "description": "Group study session 📚"},
+            {"type": "walk", "description": "Walk around the city 🌆"},
         ]
 
+        example_tags = [
+            "fun", "friends", "food", "culture", "fitness",
+            "outdoor", "indoor", "health", "city", "relax",
+        ]
+
+        # NEW cities + real coordinates
         city_locations = {
-            "Warsaw": {"lat": 52.22, "lng": 21.01},
-            "Poznań": {"lat": 52.4064, "lng": 16.9252},
+            "Warsaw": {"lat": 52.2297, "lng": 21.0122},
             "Kraków": {"lat": 50.0647, "lng": 19.9450},
-            "Wrocław": {"lat": 51.11, "lng": 17.02},
             "Gdańsk": {"lat": 54.3520, "lng": 18.6466},
+            "Wrocław": {"lat": 51.1079, "lng": 17.0385},
+            "Poznań": {"lat": 52.4064, "lng": 16.9252},
         }
 
-        # Generate 15 activities
-        for _ in range(15):
 
-            # Pick participants (at least 1)
-            selected_users = random.sample(fake_users, random.randint(1, 3))
+        # ============================================================
+        # 3️⃣ Generate activities in random days of CURRENT MONTH
+        # ============================================================
+
+        now = datetime.now()
+        year = now.year
+        month = now.month
+        days_in_month = calendar.monthrange(year, month)[1]
+
+        for _ in range(20):  # generate 20 activities
+
+            selected_users = random.sample(real_users, random.randint(1, len(real_users)))
             participants = [u["uid"] for u in selected_users]
 
-            # Choose activity template and tags
             template = random.choice(sample_activity_templates)
             tags = random.sample(example_tags, random.randint(1, 3))
 
-            # City = city of first participant
+            # city of first user
             first_city = selected_users[0]["city"]
             location = city_locations.get(first_city, city_locations["Warsaw"])
+
+            # ---------- RANDOM DATE ----------
+            random_day = random.randint(1, days_in_month)
+            random_hour = random.randint(8, 22)
+            random_minute = random.randint(0, 59)
+
+            time_start = datetime(year, month, random_day, random_hour, random_minute)
 
             activity_ref = db.collection("activities").document()
             activity_ref.set({
@@ -82,33 +122,35 @@ class Command(BaseCommand):
                 "tags": tags,
                 "description": template["description"],
                 "location": location,
-                "time_start": firestore.SERVER_TIMESTAMP,
-                "time_end": None,
+                "time_start": time_start,
+                "time_end": None
             })
 
             activity_id = activity_ref.id
 
             # ---------- Likes ----------
-            like_users = random.sample(fake_users, random.randint(0, len(fake_users)))
+            like_users = random.sample(real_users, random.randint(0, len(real_users)))
             for u in like_users:
                 activity_ref.collection("likes").document(u["uid"]).set({
                     "user_id": u["uid"],
                     "user_display_name": u["display_name"],
-                    "timestamp": firestore.SERVER_TIMESTAMP
+                    "timestamp": time_start
                 })
 
             # ---------- Comments ----------
-            comment_users = random.sample(fake_users, random.randint(0, 5))
+            comment_users = random.sample(real_users, random.randint(0, len(real_users)))
             for u in comment_users:
                 activity_ref.collection("comments").add({
                     "user_id": u["uid"],
                     "user_display_name": u["display_name"],
-                    "text": f"{u['display_name']} says hello!",
-                    "timestamp": firestore.SERVER_TIMESTAMP
+                    "text": f"{u['display_name']} joins the activity!",
+                    "timestamp": time_start
                 })
 
-            self.stdout.write(self.style.SUCCESS(
-                f"Activity {activity_id}: {len(participants)} participants"
-            ))
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Activity {activity_id}: {len(participants)} participants on {time_start}"
+                )
+            )
 
         self.stdout.write(self.style.SUCCESS("Sample data generation complete!"))
