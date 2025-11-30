@@ -8,8 +8,7 @@ import {
   Share2,
   Send,
   CornerDownRight,
-  Users,
-  Check // Import Check icon
+  Check
 } from 'lucide-react';
 import { 
   doc, 
@@ -50,7 +49,6 @@ const ActivityCard = ({ post, onUserClick = () => {}, onActivityClick = () => {}
   const [loadingComments, setLoadingComments] = useState(false);
   const [submittingComment, setSubmittingComment] = useState(false);
   
-  // Stan dla potwierdzenia skopiowania linku
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -84,11 +82,10 @@ const ActivityCard = ({ post, onUserClick = () => {}, onActivityClick = () => {}
   };
 
   const handleShare = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Zapobiegamy otwarciu szczegółów przy kliknięciu Share
+    e.stopPropagation();
     
     const url = `${window.location.origin}?activityId=${post.id}`;
     
-    // Fallback dla clipboardu (działa w większości przeglądarek i iframe'ów)
     const textArea = document.createElement("textarea");
     textArea.value = url;
     document.body.appendChild(textArea);
@@ -96,7 +93,7 @@ const ActivityCard = ({ post, onUserClick = () => {}, onActivityClick = () => {}
     try {
       document.execCommand('copy');
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000); // Reset po 2 sekundach
+      setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error('Unable to copy', err);
     }
@@ -187,14 +184,26 @@ const ActivityCard = ({ post, onUserClick = () => {}, onActivityClick = () => {}
         </button>
       </div>
 
-      {post.image && (
-        <div 
-            onClick={() => onActivityClick && onActivityClick(post.id)}
-            className="bg-gray-100 w-full h-64 md:h-96 flex items-center justify-center text-gray-400 relative overflow-hidden group cursor-pointer"
-        >
-           <img src={post.image} alt="Activity" className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
-        </div>
-      )}
+      {/* MEDIA SECTION: Obrazek LUB Mapa */}
+      <div 
+          onClick={() => onActivityClick && onActivityClick(post.id)}
+          className="bg-gray-100 w-full h-64 md:h-80 flex items-center justify-center text-gray-400 relative overflow-hidden group cursor-pointer"
+      >
+         {post.image ? (
+             <img src={post.image} alt="Activity" className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+         ) : post.coords ? (
+             // MAPA (jeśli brak zdjęcia, a są koordynaty)
+             <iframe
+                width="100%"
+                height="100%"
+                src={`https://www.openstreetmap.org/export/embed.html?bbox=${post.coords.lng - 0.01}%2C${post.coords.lat - 0.01}%2C${post.coords.lng + 0.01}%2C${post.coords.lat + 0.01}&layer=mapnik&marker=${post.coords.lat}%2C${post.coords.lng}`}
+                className="border-0 pointer-events-none" // pointer-events-none żeby mapa nie przechwytywała kliknięcia w kartę
+                title="Map"
+             ></iframe>
+         ) : (
+             <span>No image available</span>
+         )}
+      </div>
 
       <div className="p-5">
         <div onClick={() => onActivityClick && onActivityClick(post.id)} className="cursor-pointer">

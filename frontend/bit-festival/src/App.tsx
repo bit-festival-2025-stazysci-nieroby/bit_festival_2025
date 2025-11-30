@@ -8,6 +8,7 @@ import { MoreHorizontal, Loader2, AlertCircle, Moon, Sun, Eye, Monitor, Type, Sp
 
 import Sidebar from './components/Sidebar';
 import ActivityCard from './components/ActivityCard';
+import Login from './components/Login';
 import LandingPage from './components/LandingPage';
 import Onboarding from './components/OnBoarding';
 import Profile from './components/Profile';
@@ -172,6 +173,8 @@ function App() {
                     title: item.tags?.length > 0 ? `${item.tags[0].charAt(0).toUpperCase() + item.tags[0].slice(1)} Session` : 'Activity',
                     description: item.description || "",
                     partners: partnersList,
+                    // TUTAJ PRZYPISUJEMY LOKALIZACJĘ
+                    coords: item.location && item.location.lat ? item.location : undefined, 
                     stats: {
                         duration: item.time_end ? "Completed" : "Active",
                         distance: "-",
@@ -220,6 +223,12 @@ function App() {
       setCurrentView('activity_detail');
   };
 
+  const handleCreateSuccess = () => {
+      setIsCreateModalOpen(false);
+      fetchFeed(true);
+      setCurrentView('feed');
+  };
+
   if (authLoading) {
     return (
       <div className="h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
@@ -227,6 +236,7 @@ function App() {
       </div>
     );
   }
+
   if (!user) {
     return <LandingPage />;
   }
@@ -259,6 +269,7 @@ function App() {
         <Sidebar 
             currentView={currentView} 
             onNavigate={handleSidebarNavigate} 
+            onCreateActivity={() => setIsCreateModalOpen(true)} 
         />
       )}
       
@@ -371,7 +382,6 @@ function App() {
                   </h2>
                 </div>
                 <div className="p-6 space-y-6">
-                  {/* ... Przełączniki (bez zmian) ... */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>

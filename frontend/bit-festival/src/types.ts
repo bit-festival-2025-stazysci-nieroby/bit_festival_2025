@@ -1,6 +1,6 @@
 export interface User {
+  id: string;
   name: string;
-  id: string,
   avatar: string;
   location?: string;
 }
@@ -23,8 +23,8 @@ export interface SocialData {
   likes: number;
   comments: number;
   taggedUsers?: string[];
-  userLiked?: boolean; 
-  lastComment?: CommentData | null; 
+  userLiked?: boolean;
+  lastComment?: CommentData | null;
 }
 
 export interface ActivityPost {
@@ -38,4 +38,5 @@ export interface ActivityPost {
   stats?: ActivityStats;
   social: SocialData;
   partners?: User[];
+  coords?: { lat: number; lng: number };
 }
