@@ -7,7 +7,9 @@ import {
   MessageCircle, 
   Share2,
   Send,
-  CornerDownRight
+  CornerDownRight,
+  Users,
+  Check // Import Check icon
 } from 'lucide-react';
 import { 
   doc, 
@@ -26,7 +28,7 @@ import type { ActivityPost } from '../types';
 interface ActivityCardProps {
   post: ActivityPost;
   onUserClick?: (uid: string) => void;
-  onActivityClick?: (activityId: string) => void; // NOWY PROP
+  onActivityClick?: (activityId: string) => void;
 }
 
 interface Comment {
@@ -47,6 +49,9 @@ const ActivityCard = ({ post, onUserClick = () => {}, onActivityClick = () => {}
   const [newComment, setNewComment] = useState("");
   const [loadingComments, setLoadingComments] = useState(false);
   const [submittingComment, setSubmittingComment] = useState(false);
+  
+  // Stan dla potwierdzenia skopiowania linku
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     setIsLiked(post.social.userLiked || false);
@@ -76,6 +81,26 @@ const ActivityCard = ({ post, onUserClick = () => {}, onActivityClick = () => {}
       setIsLiked(previousLiked);
       setLikesCount(likesCount);
     }
+  };
+
+  const handleShare = (e: React.MouseEvent) => {
+    e.stopPropagation(); // Zapobiegamy otwarciu szczegółów przy kliknięciu Share
+    
+    const url = `${window.location.origin}?activityId=${post.id}`;
+    
+    // Fallback dla clipboardu (działa w większości przeglądarek i iframe'ów)
+    const textArea = document.createElement("textarea");
+    textArea.value = url;
+    document.body.appendChild(textArea);
+    textArea.select();
+    try {
+      document.execCommand('copy');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000); // Reset po 2 sekundach
+    } catch (err) {
+      console.error('Unable to copy', err);
+    }
+    document.body.removeChild(textArea);
   };
 
   const fetchComments = async () => {
@@ -129,7 +154,6 @@ const ActivityCard = ({ post, onUserClick = () => {}, onActivityClick = () => {}
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6 transition-all hover:shadow-md dark:bg-gray-800 dark:border-gray-700">
-      {/* Header */}
       <div className="p-4 flex justify-between items-start">
         <div className="flex gap-3">
           <img 
@@ -163,7 +187,6 @@ const ActivityCard = ({ post, onUserClick = () => {}, onActivityClick = () => {}
         </button>
       </div>
 
-      {/* KLIKALNY OBSZAR ZDJĘCIA */}
       {post.image && (
         <div 
             onClick={() => onActivityClick && onActivityClick(post.id)}
@@ -173,11 +196,30 @@ const ActivityCard = ({ post, onUserClick = () => {}, onActivityClick = () => {}
         </div>
       )}
 
-      {/* KLIKALNY OBSZAR TREŚCI */}
       <div className="p-5">
         <div onClick={() => onActivityClick && onActivityClick(post.id)} className="cursor-pointer">
             <h2 className="text-lg font-bold text-gray-900 mb-2 dark:text-white hover:text-teal-600 transition-colors">{post.title}</h2>
             <p className="text-gray-600 text-sm mb-4 leading-relaxed dark:text-gray-300">{post.description}</p>
+
+            {post.partners && post.partners.length > 0 && (
+                <div className="flex items-center gap-2 mb-4 bg-gray-50 dark:bg-gray-800/50 p-2 rounded-lg border border-gray-100 dark:border-gray-700/50">
+                    <div className="flex -space-x-2 overflow-hidden px-1">
+                        {post.partners.map((partner) => (
+                            <img 
+                                key={partner.id} 
+                                src={partner.avatar} 
+                                alt={partner.name}
+                                title={partner.name}
+                                onClick={(e) => { e.stopPropagation(); onUserClick && onUserClick(partner.id); }}
+                                className="inline-block h-6 w-6 rounded-full ring-2 ring-white dark:ring-gray-800 cursor-pointer hover:scale-110 transition-transform object-cover"
+                            />
+                        ))}
+                    </div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">
+                        Done with {post.partners.length} others
+                    </span>
+                </div>
+            )}
 
             {post.stats && (
             <div className="bg-gray-50 rounded-lg p-4 mb-4 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors">
@@ -208,7 +250,13 @@ const ActivityCard = ({ post, onUserClick = () => {}, onActivityClick = () => {}
                <MessageCircle size={18} /> {commentsCount}
              </button>
           </div>
-          <button className="hover:text-gray-800 transition-colors cursor-pointer"><Share2 size={18} /></button>
+          <button 
+            onClick={handleShare} 
+            className={`flex items-center gap-1 transition-colors cursor-pointer ${copied ? 'text-green-500' : 'hover:text-gray-800'}`}
+            title="Copy link"
+          >
+            {copied ? <Check size={18} /> : <Share2 size={18} />}
+          </button>
         </div>
 
         {!showComments && post.social.lastComment && (

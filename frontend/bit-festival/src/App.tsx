@@ -14,8 +14,6 @@ import Profile from './components/Profile';
 import Explore from './components/Explore';
 import ActivityDetail from './components/ActivityDetail';
 import Notifications from './components/Notifications';
-
-
 import { mockPosts } from './lib/mockdata';
 import type { ActivityPost } from './types';
 
@@ -54,6 +52,16 @@ function App() {
     localStorage.setItem('largeText', String(isLargeText));
   }, [isDarkMode, isHighContrast, isLargeText]);
 
+  // DEEP LINKING: Sprawdź URL przy starcie
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const activityId = params.get('activityId');
+    if (activityId) {
+      setSelectedActivityId(activityId);
+      setCurrentView('activity_detail');
+    }
+  }, []);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
@@ -80,14 +88,9 @@ function App() {
 
     return () => unsubscribe();
   }, []);
-
-  // Pobieranie feedu przy zmianie widoku, usera LUB trybu feedu
   useEffect(() => {
     if (user && !showOnboarding && currentView === 'feed') {
       const now = Date.now();
-      // Jeśli zmieniliśmy tryb, chcemy wymusić pobranie, więc ignorujemy cache w tym przypadku
-      // Ale jeśli to tylko powrót do widoku, sprawdzamy cache.
-      // Uprościmy: Pobieramy zawsze przy zmianie feedMode
       fetchFeed();
     }
   }, [user, showOnboarding, currentView, feedMode]);
@@ -218,6 +221,12 @@ function App() {
   const handleActivityClick = (activityId: string) => {
       setSelectedActivityId(activityId);
       setCurrentView('activity_detail');
+  };
+
+  const handleCreateSuccess = () => {
+      setIsCreateModalOpen(false);
+      fetchFeed(true);
+      setCurrentView('feed');
   };
 
   if (authLoading) {
