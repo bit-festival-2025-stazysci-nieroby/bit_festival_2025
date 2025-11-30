@@ -9,12 +9,13 @@ import { MoreHorizontal, Loader2, AlertCircle, Moon, Sun, Eye, Monitor, Type } f
 import Sidebar from './components/Sidebar';
 import ActivityCard from './components/ActivityCard';
 import Login from './components/Login';
-import Onboarding from './components/OnBoarding';
+import Onboarding from './components/Onboarding';
 import Profile from './components/Profile';
 import Explore from './components/Explore';
 import ActivityDetail from './components/ActivityDetail';
+import Notifications from './components/Notifications'; // IMPORT
 
-import { mockPosts } from './lib/mockdata';
+import { mockPosts } from './lib/mockData';
 import type { ActivityPost } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
@@ -202,12 +203,8 @@ function App() {
   return (
     <div className={`flex min-h-screen font-sans transition-colors duration-200 ${isDarkMode ? 'dark' : ''} ${isHighContrast ? 'high-contrast' : ''}`}>
       
-      {/* STYLE GLOBALNE I OVERRIDES */}
       <style>{`
-        /* SKALOWANIE CZCIONKI */
         ${isLargeText ? 'html { font-size: 115% !important; }' : ''}
-
-        /* DARK MODE */
         .dark .bg-white { background-color: #1f2937 !important; color: #f3f4f6 !important; }
         .dark .bg-gray-50 { background-color: #111827 !important; }
         .dark .text-gray-900 { color: #f3f4f6 !important; }
@@ -216,8 +213,6 @@ function App() {
         .dark .border-gray-100, .dark .border-gray-200 { border-color: #374151 !important; }
         .dark .hover\\:bg-gray-50:hover { background-color: #374151 !important; }
         .dark input { background-color: #374151 !important; color: white !important; border-color: #4b5563 !important; }
-        
-        /* HIGH CONTRAST */
         .high-contrast { filter: contrast(120%); }
         .high-contrast .bg-white, .high-contrast .bg-gray-50 { background-color: #000000 !important; }
         .high-contrast, .high-contrast h1, .high-contrast h2, .high-contrast h3, .high-contrast p, .high-contrast span, .high-contrast div { color: #FFFF00 !important; }
@@ -231,6 +226,7 @@ function App() {
         <Sidebar 
             currentView={currentView} 
             onNavigate={handleSidebarNavigate} 
+            onCreateActivity={() => {}} 
         />
       )}
       
@@ -303,8 +299,12 @@ function App() {
              />
           )}
 
+          {/* NOWY WIDOK: POWIADOMIENIA */}
           {currentView === 'notifications' && (
-             <div className="text-center py-20 text-gray-400 dark:text-gray-500">Notifications Coming Soon</div>
+             <Notifications 
+                onUserClick={handleUserClick}
+                onActivityClick={handleActivityClick}
+             />
           )}
 
           {currentView === 'settings' && (
@@ -318,7 +318,7 @@ function App() {
                   </h2>
                 </div>
                 <div className="p-6 space-y-6">
-                  {/* Dark Mode */}
+                  {/* ... Przełączniki (takie same jak wcześniej) ... */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
@@ -334,7 +334,6 @@ function App() {
                     </button>
                   </div>
 
-                  {/* High Contrast */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className={`p-2 rounded-lg ${isHighContrast ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
@@ -350,7 +349,6 @@ function App() {
                     </button>
                   </div>
 
-                  {/* Large Text */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className={`p-2 rounded-lg ${isLargeText ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>

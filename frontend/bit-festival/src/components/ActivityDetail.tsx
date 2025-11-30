@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { doc, getDoc, collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, setDoc, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
-import { ArrowLeft, MapPin, Clock, Heart, MessageCircle, Send, Calendar, Share2, Timer, Flame } from 'lucide-react';
+import { ArrowLeft, MapPin, Clock, Heart, MessageCircle, Send, Share2, Timer, Flame, Users } from 'lucide-react';
 import type { ActivityPost } from '../types';
 
 interface ActivityDetailProps {
@@ -10,14 +10,26 @@ interface ActivityDetailProps {
   onUserClick: (uid: string) => void;
 }
 
+// Interfejs dla uczestnika
+interface Participant {
+  uid: string;
+  displayName: string;
+  photoURL: string;
+}
+
 const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps) => {
   const [post, setPost] = useState<ActivityPost | null>(null);
   const [comments, setComments] = useState<any[]>([]);
+  const [participants, setParticipants] = useState<Participant[]>([]);
   const [newComment, setNewComment] = useState("");
   const [loading, setLoading] = useState(true);
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(0);
+  
+  // NOWE: Stan dla współrzędnych mapy
+  const [coords, setCoords] = useState<{lat: number; lng: number} | null>(null);
 
+  // 1. Pobieranie danych aktywności i uczestników
   useEffect(() => {
     const fetchActivity = async () => {
       try {
@@ -26,30 +38,59 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
 
         if (docSnap.exists()) {
           const data = docSnap.data();
+          
+          // Pobieranie lokalizacji do stanu
+          if (data.location && data.location.lat && data.location.lng) {
+             setCoords({ lat: data.location.lat, lng: data.location.lng });
+          }
+
+          // Mapowanie podstawowe
           const mappedPost: any = {
             id: docSnap.id,
             user: {
                 id: data.participants?.[0] || 'unknown',
-                name: "Loading...",
+                name: "Loading...", 
                 avatar: `https://ui-avatars.com/api/?name=${data.participants?.[0] || 'U'}&background=random&color=fff`,
                 location: data.location ? "Checked in" : ""
             },
             type: data.tags?.[0] || 'other',
-            timestamp: data.time_start ? new Date(data.time_start.toDate()).toLocaleString() : '',
-            title: data.description ? "Activity Details" : "Activity",
+            timestamp: data.time_start?.toDate ? data.time_start.toDate().toLocaleString() : (data.time_start ? new Date(data.time_start).toLocaleString() : ''),
+            title: data.description ? (data.tags?.[0] ? `${data.tags[0]} Session` : "Activity") : "Activity",
             description: data.description || "",
-            image: data.image, 
+            image: data.image,
             stats: {
-                duration: "Active",
+                duration: "Active", 
+                distance: "-",
+                pace: "-",
+                calories: "-"
             },
             social: { likes: 0, comments: 0 }
           };
+          
+          // Logika pobierania danych o uczestnikach
           if(data.participants && data.participants.length > 0) {
+             // 1. Pobieramy głównego autora (pierwszy na liście)
              const userDoc = await getDoc(doc(db, "users", data.participants[0]));
              if(userDoc.exists()) {
                  mappedPost.user.name = userDoc.data().displayName;
                  mappedPost.user.avatar = userDoc.data().photoURL;
              }
+
+             // 2. Pobieramy wszystkich uczestników
+             const participantPromises = data.participants.map((uid: string) => getDoc(doc(db, "users", uid)));
+             const participantSnaps = await Promise.all(participantPromises);
+             
+             const loadedParticipants: Participant[] = [];
+             participantSnaps.forEach((snap: any) => {
+                 if (snap.exists()) {
+                     loadedParticipants.push({
+                         uid: snap.id,
+                         displayName: snap.data().displayName || 'User',
+                         photoURL: snap.data().photoURL || `https://ui-avatars.com/api/?name=${snap.id}`
+                     });
+                 }
+             });
+             setParticipants(loadedParticipants);
           }
 
           setPost(mappedPost);
@@ -63,6 +104,8 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
 
     fetchActivity();
   }, [activityId]);
+
+  // 2. Nasłuchiwanie komentarzy
   useEffect(() => {
     const q = query(collection(db, "activities", activityId, "comments"), orderBy("timestamp", "asc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -72,6 +115,7 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
     return () => unsubscribe();
   }, [activityId]);
 
+  // 3. Nasłuchiwanie lajków
   useEffect(() => {
     const q = query(collection(db, "activities", activityId, "likes"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -110,7 +154,7 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
   };
 
   if (loading) return <div className="flex h-screen items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-500"></div></div>;
-  if (!post) return <div className="text-center py-20">Activity not found</div>;
+  if (!post) return <div className="text-center py-20 text-gray-500 dark:text-gray-400">Activity not found</div>;
 
   return (
     <div className="bg-white min-h-screen dark:bg-gray-900 animate-in slide-in-from-right duration-300">
@@ -131,7 +175,7 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
               src={post.user.avatar} 
               alt={post.user.name} 
               onClick={() => onUserClick(post.user.id)}
-              className="w-16 h-16 rounded-full object-cover border-2 border-gray-100 cursor-pointer"
+              className="w-16 h-16 rounded-full object-cover border-2 border-gray-100 dark:border-gray-800 cursor-pointer"
             />
             <div>
               <h2 onClick={() => onUserClick(post.user.id)} className="text-xl font-bold text-gray-900 dark:text-white cursor-pointer hover:underline">
@@ -156,11 +200,59 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
             </p>
           </div>
 
+          {/* Dynamiczna Mapa */}
+          {coords && (
+            <div className="mb-8 h-64 w-full rounded-2xl overflow-hidden shadow-sm border border-gray-100 dark:border-gray-800 z-0">
+                <iframe
+                width="100%"
+                height="100%"
+                // Dynamicznie budujemy URL z bboxem wokół punktu (lat +/- 0.01, lng +/- 0.01)
+                src={`https://www.openstreetmap.org/export/embed.html?bbox=${coords.lng - 0.01}%2C${coords.lat - 0.01}%2C${coords.lng + 0.01}%2C${coords.lat + 0.01}&layer=mapnik&marker=${coords.lat}%2C${coords.lng}`}
+                className="border-0"
+                title="Activity Map"
+                ></iframe>
+            </div>
+          )}
+
+          {/* Sekcja Participants */}
+          {participants.length > 0 && (
+            <div className="mb-8 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-800">
+                <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-3 flex items-center gap-2 uppercase tracking-wider">
+                    <Users size={16} className="text-teal-500" />
+                    Participants ({participants.length})
+                </h3>
+                <div className="flex flex-wrap gap-3">
+                    {participants.map((p) => (
+                        <div 
+                            key={p.uid} 
+                            onClick={() => onUserClick(p.uid)}
+                            className="flex items-center gap-2 bg-white dark:bg-gray-800 p-2 pr-4 rounded-full border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-teal-400 dark:hover:border-teal-500 transition-colors shadow-sm"
+                        >
+                            <img src={p.photoURL} alt={p.displayName} className="w-8 h-8 rounded-full object-cover" />
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{p.displayName}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+          )}
+
           {/* Stats Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8 bg-gray-50 dark:bg-gray-800 p-6 rounded-2xl">
              <div>
                 <div className="text-gray-400 text-xs uppercase font-bold mb-1 flex items-center gap-1"><Clock size={12}/> Duration</div>
                 <div className="text-xl font-bold text-gray-900 dark:text-white">{post.stats?.duration || "-"}</div>
+             </div>
+             <div>
+                <div className="text-gray-400 text-xs uppercase font-bold mb-1 flex items-center gap-1"><MapPin size={12}/> Distance</div>
+                <div className="text-xl font-bold text-gray-900 dark:text-white">{post.stats?.distance || "-"}</div>
+             </div>
+             <div>
+                <div className="text-gray-400 text-xs uppercase font-bold mb-1 flex items-center gap-1"><Timer size={12}/> Pace</div>
+                <div className="text-xl font-bold text-gray-900 dark:text-white">{post.stats?.pace || "-"}</div>
+             </div>
+             <div>
+                <div className="text-gray-400 text-xs uppercase font-bold mb-1 flex items-center gap-1"><Flame size={12}/> Calories</div>
+                <div className="text-xl font-bold text-gray-900 dark:text-white">{post.stats?.calories || "-"}</div>
              </div>
           </div>
 
@@ -179,7 +271,7 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
              </button>
           </div>
 
-          {/* Comments Section (Full View) */}
+          {/* Comments Section */}
           <div>
             <h3 className="text-lg font-bold mb-6 text-gray-900 dark:text-white">Comments</h3>
             
@@ -214,7 +306,7 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
       </div>
 
       {/* Sticky Comment Input */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 p-4 md:pl-72">
+      <div className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 p-4 md:pl-64">
          <div className="max-w-3xl mx-auto flex gap-3">
             <input 
               type="text" 
