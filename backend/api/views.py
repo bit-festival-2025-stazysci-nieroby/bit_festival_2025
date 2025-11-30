@@ -133,7 +133,7 @@ def get_feed(request):
         docs = (
             db.collection("activities")
             .order_by("time_start", direction=firestore.Query.DESCENDING)
-            .limit(50)
+            .limit(10)
             .stream()
         )
 
@@ -585,7 +585,7 @@ def get_feed_ai(request):
         docs = (
             db.collection("activities")
             .order_by("time_start", direction=firestore.Query.DESCENDING)
-            .limit(100)
+            .limit(10)
             .stream()
         )
 

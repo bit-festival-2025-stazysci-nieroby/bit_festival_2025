@@ -11,7 +11,7 @@ interface UserProfileData {
   email: string;
   photoURL: string;
   location?: string;
-  bio?: string; // Nowe pole
+  bio?: string;
   tags?: string[];
   createdAt?: string;
 }

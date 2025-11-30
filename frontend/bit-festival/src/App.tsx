@@ -8,12 +8,14 @@ import { MoreHorizontal, Loader2, AlertCircle, Moon, Sun, Eye, Monitor, Type, Sp
 
 import Sidebar from './components/Sidebar';
 import ActivityCard from './components/ActivityCard';
-import Login from './components/Login';
+import LandingPage from './components/LandingPage';
 import Onboarding from './components/OnBoarding';
 import Profile from './components/Profile';
 import Explore from './components/Explore';
 import ActivityDetail from './components/ActivityDetail';
 import Notifications from './components/Notifications';
+import HeroSection from './components/HeroSection';
+
 import { mockPosts } from './lib/mockdata';
 import type { ActivityPost } from './types';
 
@@ -21,7 +23,7 @@ const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 const CACHE_DURATION = 5 * 60 * 1000;
 
 type View = 'feed' | 'explore' | 'profile' | 'notifications' | 'settings' | 'activity_detail';
-type FeedMode = 'ai' | 'latest'; // Nowy typ dla trybu feedu
+type FeedMode = 'ai' | 'latest';
 
 function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -33,7 +35,6 @@ function App() {
   const [usingOfflineData, setUsingOfflineData] = useState(false);
   const [lastFeedFetch, setLastFeedFetch] = useState<number>(0);
 
-  // Nowy stan dla trybu feedu (domyślnie AI)
   const [feedMode, setFeedMode] = useState<FeedMode>('ai');
 
   const [currentView, setCurrentView] = useState<View>('feed');
@@ -52,7 +53,6 @@ function App() {
     localStorage.setItem('largeText', String(isLargeText));
   }, [isDarkMode, isHighContrast, isLargeText]);
 
-  // DEEP LINKING: Sprawdź URL przy starcie
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const activityId = params.get('activityId');
@@ -88,6 +88,7 @@ function App() {
 
     return () => unsubscribe();
   }, []);
+
   useEffect(() => {
     if (user && !showOnboarding && currentView === 'feed') {
       const now = Date.now();
@@ -112,11 +113,8 @@ function App() {
   };
 
   const fetchFeed = async (forceRefresh = false) => {
-    // Prosty cache tylko jeśli nie wymuszamy i nie zmienił się tryb (ale tu useEffect wywołuje przy zmianie trybu)
     if (!forceRefresh && posts.length > 0 && (Date.now() - lastFeedFetch < CACHE_DURATION)) {
-        // Mały hack: jeśli mamy posty, ale zmieniliśmy tryb, to i tak powinniśmy pobrać.
-        // Jednak useEffect ma [feedMode] w zależnościach, więc to wywołanie jest "nowe".
-        // Dla uproszczenia w tym demo pomijamy zaawansowany cache per-mode.
+       // cache logic if needed
     }
 
     setIsFeedLoading(true);
@@ -178,7 +176,6 @@ function App() {
                         duration: item.time_end ? "Completed" : "Active",
                         distance: "-",
                         pace: "-",
-                        // Pokaż score tylko w trybie AI
                         calories: (feedMode === 'ai' && item.ai_score) ? `AI Score: ${Math.round(item.ai_score)}` : "-" 
                     },
                     social: {
@@ -223,12 +220,6 @@ function App() {
       setCurrentView('activity_detail');
   };
 
-  const handleCreateSuccess = () => {
-      setIsCreateModalOpen(false);
-      fetchFeed(true);
-      setCurrentView('feed');
-  };
-
   if (authLoading) {
     return (
       <div className="h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
@@ -236,8 +227,10 @@ function App() {
       </div>
     );
   }
+  if (!user) {
+    return <LandingPage />;
+  }
 
-  if (!user) return <Login />;
   if (showOnboarding) return <Onboarding onComplete={handleOnboardingComplete} />;
 
   return (
@@ -287,15 +280,11 @@ function App() {
 
           {currentView === 'feed' && (
             <>
-              <div className="mb-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Activity Feed</h1>
-                    <p className="text-gray-500 dark:text-gray-400 mt-1">
-                    Welcome back, {user.displayName?.split(' ')[0] || 'User'}! 
-                    </p>
-                </div>
+              <HeroSection user={user} />
 
-                {/* --- FEED MODE TOGGLE --- */}
+              <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Latest Activity</h2>
+
                 <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl shrink-0 self-start sm:self-auto">
                     <button 
                         onClick={() => setFeedMode('ai')}
@@ -382,7 +371,7 @@ function App() {
                   </h2>
                 </div>
                 <div className="p-6 space-y-6">
-                  {/* ... Przełączniki ... */}
+                  {/* ... Przełączniki (bez zmian) ... */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
