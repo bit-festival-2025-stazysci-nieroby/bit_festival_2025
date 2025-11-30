@@ -1,4 +1,4 @@
-import { Home, Compass, User, Bell, Settings, LogOut, PlusCircle } from 'lucide-react';
+import { Home, Compass, User, Bell, Settings, LogOut } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../lib/firebase';
 
@@ -7,9 +7,10 @@ type View = 'feed' | 'explore' | 'profile' | 'notifications' | 'settings';
 interface SidebarProps {
   currentView: View;
   onNavigate: (view: View) => void;
+  onCreateActivity: () => void;
 }
 
-const Sidebar = ({ currentView, onNavigate}: SidebarProps) => {
+const Sidebar = ({ currentView, onNavigate }: SidebarProps) => {
   const menuItems: { icon: any; label: string; id: View }[] = [
     { icon: Home, label: 'Feed', id: 'feed' },
     { icon: Compass, label: 'Explore', id: 'explore' },
@@ -33,19 +34,18 @@ const Sidebar = ({ currentView, onNavigate}: SidebarProps) => {
           Active<span className="text-teal-500">Connect</span>
         </h1>
       </div>
-
       <nav className="space-y-2 flex-1">
         {menuItems.map((item) => (
           <button
             key={item.id}
             onClick={() => onNavigate(item.id)}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors cursor-pointer group ${
               currentView === item.id
-                ? 'bg-orange-50 text-orange-600 dark:bg-gray-700 dark:text-orange-400'
-                : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200'
+                ? 'bg-teal-50 text-teal-600 dark:bg-gray-700 dark:text-teal-400'
+                : 'text-gray-500 hover:bg-teal-50 hover:text-teal-600 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-teal-400'
             }`}
           >
-            <item.icon size={20} className={currentView === item.id ? 'text-orange-500 dark:text-orange-400' : ''} />
+            <item.icon size={20} className={currentView === item.id ? 'text-teal-500 dark:text-teal-400' : 'group-hover:text-teal-500'} />
             {item.label}
           </button>
         ))}
