@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { doc, getDoc, collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, setDoc, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
-import { ArrowLeft, MapPin, Clock, Heart, MessageCircle, Send, Share2, Timer, Flame, Users } from 'lucide-react';
+import { ArrowLeft, MapPin, Clock, Heart, MessageCircle, Send, Share2, Timer, Flame, Users, Check } from 'lucide-react';
 import type { ActivityPost } from '../types';
 
 interface ActivityDetailProps {
@@ -26,8 +26,11 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(0);
   
-  // NOWE: Stan dla współrzędnych mapy
+  // Stan dla współrzędnych mapy
   const [coords, setCoords] = useState<{lat: number; lng: number} | null>(null);
+  
+  // NOWE: Stan dla kopiowania
+  const [copied, setCopied] = useState(false);
 
   // 1. Pobieranie danych aktywności i uczestników
   useEffect(() => {
@@ -39,12 +42,10 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
         if (docSnap.exists()) {
           const data = docSnap.data();
           
-          // Pobieranie lokalizacji do stanu
           if (data.location && data.location.lat && data.location.lng) {
              setCoords({ lat: data.location.lat, lng: data.location.lng });
           }
 
-          // Mapowanie podstawowe
           const mappedPost: any = {
             id: docSnap.id,
             user: {
@@ -67,16 +68,13 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
             social: { likes: 0, comments: 0 }
           };
           
-          // Logika pobierania danych o uczestnikach
           if(data.participants && data.participants.length > 0) {
-             // 1. Pobieramy głównego autora (pierwszy na liście)
              const userDoc = await getDoc(doc(db, "users", data.participants[0]));
              if(userDoc.exists()) {
                  mappedPost.user.name = userDoc.data().displayName;
                  mappedPost.user.avatar = userDoc.data().photoURL;
              }
 
-             // 2. Pobieramy wszystkich uczestników
              const participantPromises = data.participants.map((uid: string) => getDoc(doc(db, "users", uid)));
              const participantSnaps = await Promise.all(participantPromises);
              
@@ -140,6 +138,23 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
     }
   };
 
+  const handleShare = () => {
+    const url = `${window.location.origin}?activityId=${activityId}`;
+    
+    const textArea = document.createElement("textarea");
+    textArea.value = url;
+    document.body.appendChild(textArea);
+    textArea.select();
+    try {
+      document.execCommand('copy');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Unable to copy', err);
+    }
+    document.body.removeChild(textArea);
+  };
+
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim() || !auth.currentUser) return;
@@ -167,7 +182,6 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
       </div>
 
       <div className="max-w-3xl mx-auto pb-24">
-        {/* Main Content */}
         <div className="p-6">
           {/* User Header */}
           <div className="flex items-center gap-4 mb-6">
@@ -206,7 +220,6 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
                 <iframe
                 width="100%"
                 height="100%"
-                // Dynamicznie budujemy URL z bboxem wokół punktu (lat +/- 0.01, lng +/- 0.01)
                 src={`https://www.openstreetmap.org/export/embed.html?bbox=${coords.lng - 0.01}%2C${coords.lat - 0.01}%2C${coords.lng + 0.01}%2C${coords.lat + 0.01}&layer=mapnik&marker=${coords.lat}%2C${coords.lng}`}
                 className="border-0"
                 title="Activity Map"
@@ -266,8 +279,14 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
                    <MessageCircle size={24} /> {comments.length}
                 </div>
              </div>
-             <button className="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white">
-                <Share2 size={24} />
+             
+             {/* PRZYCISK SHARE */}
+             <button 
+                onClick={handleShare}
+                className={`flex items-center gap-2 text-lg font-medium transition-colors ${copied ? 'text-green-500 dark:text-green-400' : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}
+                title="Copy link"
+             >
+                {copied ? <Check size={24} /> : <Share2 size={24} />}
              </button>
           </div>
 
@@ -306,7 +325,7 @@ const ActivityDetail = ({ activityId, onBack, onUserClick }: ActivityDetailProps
       </div>
 
       {/* Sticky Comment Input */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 p-4 md:pl-64">
+      <div className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 p-4">
          <div className="max-w-3xl mx-auto flex gap-3">
             <input 
               type="text" 
