@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, collection, onSnapshot, getDocs, query, limit, where, orderBy } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
-import { MapPin, Calendar, Tag, Edit3, Loader2, UserPlus, Check, UserMinus, X, ChevronRight, Activity, BarChart2, Save, Image as ImageIcon } from 'lucide-react';
+import { MapPin, Calendar, Tag, Edit3, Loader2, UserPlus, Check, UserMinus, X, ChevronRight, Activity, BarChart2, Save, Image as ImageIcon, FileText } from 'lucide-react';
 import ActivityCard from './ActivityCard';
 import type { ActivityPost } from '../types';
 
@@ -11,6 +11,7 @@ interface UserProfileData {
   email: string;
   photoURL: string;
   location?: string;
+  bio?: string; // Nowe pole
   tags?: string[];
   createdAt?: string;
 }
@@ -66,6 +67,7 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
       displayName: '',
       location: '',
       photoURL: '',
+      bio: '', // Nowe pole w formularzu
       tags: [] as string[]
   });
   const [saving, setSaving] = useState(false);
@@ -73,6 +75,7 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
   const isOwnProfile = !targetUid || (auth.currentUser && targetUid === auth.currentUser.uid);
   const uidToFetch = targetUid || auth.currentUser?.uid;
 
+  // 1. Pobieranie profilu
   useEffect(() => {
     const fetchProfile = async () => {
       if (!uidToFetch) return;
@@ -83,11 +86,14 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
         if (docSnap.exists()) {
           const data = docSnap.data() as UserProfileData;
           setProfile({ uid: docSnap.id, ...data });
+          
+          // Inicjalizacja formularza edycji, jeśli to nasz profil
           if (isOwnProfile) {
               setEditForm({
                   displayName: data.displayName || '',
                   location: data.location || '',
                   photoURL: data.photoURL || '',
+                  bio: data.bio || '',
                   tags: data.tags || []
               });
           }
@@ -98,6 +104,7 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
                     displayName: auth.currentUser.displayName || 'User',
                     email: auth.currentUser.email || '',
                     photoURL: auth.currentUser.photoURL || '',
+                    bio: '',
                     tags: []
                 };
                 setProfile(initialData);
@@ -105,6 +112,7 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
                     displayName: initialData.displayName,
                     location: '',
                     photoURL: initialData.photoURL,
+                    bio: '',
                     tags: []
                 });
             } else {
@@ -119,6 +127,8 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
     };
     fetchProfile();
   }, [uidToFetch, isOwnProfile]);
+
+  // 2. Follow Status
   useEffect(() => {
     if (!auth.currentUser || !uidToFetch || isOwnProfile) return;
     const unsubscribe = onSnapshot(doc(db, "users", auth.currentUser.uid, "following", uidToFetch), 
@@ -135,6 +145,8 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
     const followingUnsub = onSnapshot(collection(db, "users", uidToFetch, "following"), (snap) => setFollowingCount(snap.size));
     return () => { followersUnsub(); followingUnsub(); };
   }, [uidToFetch]);
+
+  // 4. Aktywności i Wykres
   useEffect(() => {
     const fetchUserActivities = async () => {
         if (!uidToFetch) return;
@@ -148,6 +160,7 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
             );
             const querySnapshot = await getDocs(q);
             
+            // Wykres
             const now = new Date();
             const fourWeeksAgo = new Date();
             fourWeeksAgo.setDate(now.getDate() - 28);
@@ -177,6 +190,8 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
                 { label: 'Last week', count: buckets[2], height: buckets[2] === 0 ? 2 : (buckets[2] / maxCount) * 100 },
                 { label: 'This week', count: buckets[3], height: buckets[3] === 0 ? 2 : (buckets[3] / maxCount) * 100 },
             ]);
+
+            // Lista
             const recentDocs = querySnapshot.docs.slice(0, 10);
             const mappedActivities = await Promise.all(recentDocs.map(async (docSnap) => {
                 const data = docSnap.data();
@@ -229,6 +244,8 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
     };
     if (profile) fetchUserActivities();
   }, [uidToFetch, profile]);
+
+  // 5. Lista userów
   useEffect(() => {
     const fetchListUsers = async () => {
         if (!activeList || !uidToFetch) return;
@@ -250,7 +267,7 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
     fetchListUsers();
   }, [activeList, uidToFetch]);
 
-
+  // --- FUNKCJE EDYCJI ---
   const handleEditChange = (field: string, value: any) => {
       setEditForm(prev => ({ ...prev, [field]: value }));
   };
@@ -273,8 +290,11 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
               displayName: editForm.displayName,
               location: editForm.location,
               photoURL: editForm.photoURL,
+              bio: editForm.bio, // Zapisz bio
               tags: editForm.tags
           });
+          
+          // Aktualizuj lokalny stan profilu
           setProfile(prev => prev ? ({ ...prev, ...editForm }) : null);
           setIsEditing(false);
       } catch (error) {
@@ -327,6 +347,16 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
                             value={editForm.displayName} 
                             onChange={e => handleEditChange('displayName', e.target.value)}
                             className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-teal-500"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Bio</label>
+                        <textarea
+                            value={editForm.bio}
+                            onChange={e => handleEditChange('bio', e.target.value)}
+                            placeholder="Tell us something about yourself..."
+                            rows={3}
+                            className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-teal-500 resize-none"
                         />
                     </div>
                     <div>
@@ -446,7 +476,15 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
           </div>
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{profile.displayName}</h1>
-            <p className="text-gray-500 mb-4 dark:text-gray-400">{isOwnProfile ? profile.email : `@${profile.displayName.toLowerCase().replace(/\s/g, '')}`}</p>
+            <p className="text-gray-500 mb-2 dark:text-gray-400">{isOwnProfile ? profile.email : `@${profile.displayName.toLowerCase().replace(/\s/g, '')}`}</p>
+            
+            {/* Wyświetlanie Bio */}
+            {profile.bio && (
+                <p className="text-gray-700 dark:text-gray-300 mb-4 text-sm leading-relaxed max-w-lg">
+                    {profile.bio}
+                </p>
+            )}
+
             <div className="flex gap-6 mb-6 border-y border-gray-100 py-4 dark:border-gray-700">
                 <button onClick={() => openList('followers')} className="flex items-center gap-2 group hover:opacity-80 transition-opacity cursor-pointer">
                     <span className="font-bold text-gray-900 dark:text-white text-lg group-hover:text-teal-500 transition-colors">{followersCount}</span>
