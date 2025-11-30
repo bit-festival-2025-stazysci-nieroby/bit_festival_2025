@@ -28,7 +28,6 @@ interface WeeklyStat {
   height: number;
 }
 
-// Lista dostępnych tagów do edycji
 const AVAILABLE_TAGS = [
   "gym", "running", "cycling", "walking", "hiking", "swimming", 
   "basketball", "football", "tennis", "yoga", "boxing", "dance", 
@@ -40,20 +39,17 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
   const [profile, setProfile] = useState<UserProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   
-  // Stany followersów
   const [isFollowing, setIsFollowing] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
   const [followersCount, setFollowersCount] = useState(0);
   const [followingCount, setFollowingCount] = useState(0);
 
-  // Stany list i aktywności
   const [activeList, setActiveList] = useState<'followers' | 'following' | null>(null);
   const [listUsers, setListUsers] = useState<UserProfileData[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [userActivities, setUserActivities] = useState<ActivityPost[]>([]);
   const [activitiesLoading, setActivitiesLoading] = useState(false);
   
-  // Stany wykresu
   const [weeklyStats, setWeeklyStats] = useState<WeeklyStat[]>([
       { label: '3 weeks ago', count: 0, height: 2 },
       { label: '2 weeks ago', count: 0, height: 2 },
@@ -61,13 +57,12 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
       { label: 'This week', count: 0, height: 2 },
   ]);
 
-  // --- STANY EDYCJI PROFILU ---
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
       displayName: '',
       location: '',
       photoURL: '',
-      bio: '', // Nowe pole w formularzu
+      bio: '',
       tags: [] as string[]
   });
   const [saving, setSaving] = useState(false);
@@ -75,7 +70,6 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
   const isOwnProfile = !targetUid || (auth.currentUser && targetUid === auth.currentUser.uid);
   const uidToFetch = targetUid || auth.currentUser?.uid;
 
-  // 1. Pobieranie profilu
   useEffect(() => {
     const fetchProfile = async () => {
       if (!uidToFetch) return;
@@ -87,7 +81,6 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
           const data = docSnap.data() as UserProfileData;
           setProfile({ uid: docSnap.id, ...data });
           
-          // Inicjalizacja formularza edycji, jeśli to nasz profil
           if (isOwnProfile) {
               setEditForm({
                   displayName: data.displayName || '',
@@ -128,7 +121,6 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
     fetchProfile();
   }, [uidToFetch, isOwnProfile]);
 
-  // 2. Follow Status
   useEffect(() => {
     if (!auth.currentUser || !uidToFetch || isOwnProfile) return;
     const unsubscribe = onSnapshot(doc(db, "users", auth.currentUser.uid, "following", uidToFetch), 
@@ -138,7 +130,6 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
     return () => unsubscribe();
   }, [uidToFetch, isOwnProfile]);
 
-  // 3. Liczniki
   useEffect(() => {
     if (!uidToFetch) return;
     const followersUnsub = onSnapshot(collection(db, "users", uidToFetch, "followers"), (snap) => setFollowersCount(snap.size));
@@ -146,7 +137,7 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
     return () => { followersUnsub(); followingUnsub(); };
   }, [uidToFetch]);
 
-  // 4. Aktywności i Wykres
+  // 4. Aktywności i Wykres (POPRAWIONO MAPOWANIE DLA ZDJĘĆ I MAPY)
   useEffect(() => {
     const fetchUserActivities = async () => {
         if (!uidToFetch) return;
@@ -160,7 +151,6 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
             );
             const querySnapshot = await getDocs(q);
             
-            // Wykres
             const now = new Date();
             const fourWeeksAgo = new Date();
             fourWeeksAgo.setDate(now.getDate() - 28);
@@ -191,7 +181,6 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
                 { label: 'This week', count: buckets[3], height: buckets[3] === 0 ? 2 : (buckets[3] / maxCount) * 100 },
             ]);
 
-            // Lista
             const recentDocs = querySnapshot.docs.slice(0, 10);
             const mappedActivities = await Promise.all(recentDocs.map(async (docSnap) => {
                 const data = docSnap.data();
@@ -230,6 +219,9 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
                     timestamp: displayDate,
                     title: data.description ? (data.tags?.[0] ? `${data.tags[0].charAt(0).toUpperCase() + data.tags[0].slice(1)} Session` : "Activity") : "Activity",
                     description: data.description || "",
+                    // --- POPRAWKA: Przekazujemy image i coords ---
+                    image: data.image,
+                    coords: data.location && data.location.lat ? data.location : undefined,
                     stats: { duration: "Done", distance: "-", pace: "-", calories: "-" },
                     social: {
                         likes: likesSnap.size,
@@ -245,7 +237,6 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
     if (profile) fetchUserActivities();
   }, [uidToFetch, profile]);
 
-  // 5. Lista userów
   useEffect(() => {
     const fetchListUsers = async () => {
         if (!activeList || !uidToFetch) return;
@@ -267,7 +258,6 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
     fetchListUsers();
   }, [activeList, uidToFetch]);
 
-  // --- FUNKCJE EDYCJI ---
   const handleEditChange = (field: string, value: any) => {
       setEditForm(prev => ({ ...prev, [field]: value }));
   };
@@ -290,11 +280,9 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
               displayName: editForm.displayName,
               location: editForm.location,
               photoURL: editForm.photoURL,
-              bio: editForm.bio, // Zapisz bio
+              bio: editForm.bio,
               tags: editForm.tags
           });
-          
-          // Aktualizuj lokalny stan profilu
           setProfile(prev => prev ? ({ ...prev, ...editForm }) : null);
           setIsEditing(false);
       } catch (error) {
@@ -330,7 +318,6 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
   return (
     <div className="max-w-2xl mx-auto animate-in fade-in duration-500 relative pb-10">
       
-      {/* MODAL EDYCJI */}
       {isEditing && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in" onClick={() => setIsEditing(false)}>
             <div className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
@@ -338,96 +325,47 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
                     <h3 className="font-bold text-lg text-gray-900 dark:text-white">Edit Profile</h3>
                     <button onClick={() => setIsEditing(false)} className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full text-gray-500 dark:text-gray-400"><X size={20} /></button>
                 </div>
-                
                 <div className="p-6 overflow-y-auto space-y-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Display Name</label>
-                        <input 
-                            type="text" 
-                            value={editForm.displayName} 
-                            onChange={e => handleEditChange('displayName', e.target.value)}
-                            className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-teal-500"
-                        />
+                        <input type="text" value={editForm.displayName} onChange={e => handleEditChange('displayName', e.target.value)} className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-teal-500" />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Bio</label>
-                        <textarea
-                            value={editForm.bio}
-                            onChange={e => handleEditChange('bio', e.target.value)}
-                            placeholder="Tell us something about yourself..."
-                            rows={3}
-                            className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-teal-500 resize-none"
-                        />
+                        <textarea value={editForm.bio} onChange={e => handleEditChange('bio', e.target.value)} placeholder="Tell us something about yourself..." rows={3} className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-teal-500 resize-none" />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Location</label>
                         <div className="relative">
                             <MapPin className="absolute left-3 top-2.5 text-gray-400" size={18} />
-                            <input 
-                                type="text" 
-                                value={editForm.location} 
-                                onChange={e => handleEditChange('location', e.target.value)}
-                                placeholder="City, Country"
-                                className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-teal-500"
-                            />
+                            <input type="text" value={editForm.location} onChange={e => handleEditChange('location', e.target.value)} placeholder="City, Country" className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-teal-500" />
                         </div>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Profile Photo URL</label>
                         <div className="relative">
                             <ImageIcon className="absolute left-3 top-2.5 text-gray-400" size={18} />
-                            <input 
-                                type="text" 
-                                value={editForm.photoURL} 
-                                onChange={e => handleEditChange('photoURL', e.target.value)}
-                                placeholder="https://example.com/avatar.jpg"
-                                className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-teal-500"
-                            />
+                            <input type="text" value={editForm.photoURL} onChange={e => handleEditChange('photoURL', e.target.value)} placeholder="https://example.com/avatar.jpg" className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-teal-500" />
                         </div>
-                        {editForm.photoURL && (
-                            <img src={editForm.photoURL} alt="Preview" className="w-16 h-16 rounded-full mt-2 object-cover border border-gray-200" onError={(e) => (e.target as HTMLImageElement).src = ''}/>
-                        )}
+                        {editForm.photoURL && <img src={editForm.photoURL} alt="Preview" className="w-16 h-16 rounded-full mt-2 object-cover border border-gray-200" onError={(e) => (e.target as HTMLImageElement).src = ''}/>}
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Interests</label>
                         <div className="flex flex-wrap gap-2">
                             {AVAILABLE_TAGS.map(tag => (
-                                <button
-                                    key={tag}
-                                    onClick={() => toggleEditTag(tag)}
-                                    className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                                        editForm.tags.includes(tag) 
-                                        ? 'bg-teal-500 text-white border-teal-500' 
-                                        : 'bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-600 hover:border-teal-300'
-                                    }`}
-                                >
-                                    {tag}
-                                </button>
+                                <button key={tag} onClick={() => toggleEditTag(tag)} className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${editForm.tags.includes(tag) ? 'bg-teal-500 text-white border-teal-500' : 'bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-600 hover:border-teal-300'}`}>{tag}</button>
                             ))}
                         </div>
                     </div>
                 </div>
-
                 <div className="p-4 border-t border-gray-100 dark:border-gray-700 flex justify-end gap-3 bg-gray-50 dark:bg-gray-900">
-                    <button 
-                        onClick={() => setIsEditing(false)}
-                        className="px-4 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg font-medium transition-colors"
-                    >
-                        Cancel
-                    </button>
-                    <button 
-                        onClick={handleSaveProfile}
-                        disabled={saving}
-                        className="px-6 py-2 bg-teal-500 hover:bg-teal-600 text-white rounded-lg font-medium shadow-md flex items-center gap-2"
-                    >
-                        {saving ? <Loader2 size={18} className="animate-spin" /> : <><Save size={18} /> Save Changes</>}
-                    </button>
+                    <button onClick={() => setIsEditing(false)} className="px-4 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg font-medium transition-colors">Cancel</button>
+                    <button onClick={handleSaveProfile} disabled={saving} className="px-6 py-2 bg-teal-500 hover:bg-teal-600 text-white rounded-lg font-medium shadow-md flex items-center gap-2">{saving ? <Loader2 size={18} className="animate-spin" /> : <><Save size={18} /> Save Changes</>}</button>
                 </div>
             </div>
         </div>
       )}
 
-      {/* MODAL LISTY USERÓW */}
       {activeList && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setActiveList(null)}>
             <div className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
@@ -455,19 +393,13 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
         </div>
       )}
 
-      {/* HEADER PROFILU */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-6 dark:bg-gray-800 dark:border-gray-700">
         <div className={`h-32 bg-gradient-to-r ${isOwnProfile ? 'from-teal-400 to-blue-500' : 'from-orange-400 to-pink-500'}`}></div>
         <div className="px-8 pb-8">
           <div className="relative flex justify-between items-end -mt-12 mb-4">
             <img src={profile.photoURL || `https://ui-avatars.com/api/?name=${profile.displayName}`} alt={profile.displayName} className="w-24 h-24 rounded-full border-4 border-white shadow-md object-cover bg-white dark:border-gray-800" />
             {isOwnProfile ? (
-              <button 
-                onClick={() => setIsEditing(true)}
-                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 cursor-pointer dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
-              >
-                <Edit3 size={16} /> Edit Profile
-              </button>
+              <button onClick={() => setIsEditing(true)} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 cursor-pointer dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"><Edit3 size={16} /> Edit Profile</button>
             ) : (
               <button onClick={handleToggleFollow} disabled={followLoading} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 cursor-pointer shadow-sm ${isFollowing ? 'bg-gray-100 text-gray-700 hover:bg-red-50 hover:text-red-600 border border-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600' : 'bg-teal-500 hover:bg-teal-600 text-white'}`}>
                 {followLoading ? <Loader2 size={16} className="animate-spin" /> : isFollowing ? <><Check size={16} /> Following</> : <><UserPlus size={16} /> Follow</>}
@@ -477,14 +409,7 @@ const Profile = ({ targetUid, onUserClick = () => {}, onActivityClick = () => {}
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{profile.displayName}</h1>
             <p className="text-gray-500 mb-2 dark:text-gray-400">{isOwnProfile ? profile.email : `@${profile.displayName.toLowerCase().replace(/\s/g, '')}`}</p>
-            
-            {/* Wyświetlanie Bio */}
-            {profile.bio && (
-                <p className="text-gray-700 dark:text-gray-300 mb-4 text-sm leading-relaxed max-w-lg">
-                    {profile.bio}
-                </p>
-            )}
-
+            {profile.bio && <p className="text-gray-700 dark:text-gray-300 mb-4 text-sm leading-relaxed max-w-lg">{profile.bio}</p>}
             <div className="flex gap-6 mb-6 border-y border-gray-100 py-4 dark:border-gray-700">
                 <button onClick={() => openList('followers')} className="flex items-center gap-2 group hover:opacity-80 transition-opacity cursor-pointer">
                     <span className="font-bold text-gray-900 dark:text-white text-lg group-hover:text-teal-500 transition-colors">{followersCount}</span>
