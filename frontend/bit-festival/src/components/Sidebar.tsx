@@ -1,6 +1,7 @@
-import { Home, Compass, User, Bell, Settings, LogOut } from 'lucide-react';
+import { Home, Compass, User, Bell, Settings, LogOut, PlusCircle } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../lib/firebase';
+
 type View = 'feed' | 'explore' | 'profile' | 'notifications' | 'settings';
 
 interface SidebarProps {
@@ -8,7 +9,7 @@ interface SidebarProps {
   onNavigate: (view: View) => void;
 }
 
-const Sidebar = ({ currentView, onNavigate }: SidebarProps) => {
+const Sidebar = ({ currentView, onNavigate}: SidebarProps) => {
   const menuItems: { icon: any; label: string; id: View }[] = [
     { icon: Home, label: 'Feed', id: 'feed' },
     { icon: Compass, label: 'Explore', id: 'explore' },
@@ -26,9 +27,9 @@ const Sidebar = ({ currentView, onNavigate }: SidebarProps) => {
   };
 
   return (
-    <div className="w-64 h-screen bg-white border-r border-gray-100 flex flex-col p-6 fixed left-0 top-0 hidden md:flex z-50">
-      <div className="mb-10">
-        <h1 className="text-2xl font-bold text-gray-800">
+    <div className="w-64 h-screen bg-white dark:bg-gray-800 border-r border-gray-100 dark:border-gray-700 flex flex-col p-6 fixed left-0 top-0 hidden md:flex z-50 transition-colors">
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-gray-800 dark:text-white">
           Active<span className="text-teal-500">Connect</span>
         </h1>
       </div>
@@ -40,11 +41,11 @@ const Sidebar = ({ currentView, onNavigate }: SidebarProps) => {
             onClick={() => onNavigate(item.id)}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
               currentView === item.id
-                ? 'bg-orange-500 text-white shadow-md shadow-orange-200'
-                : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
+                ? 'bg-orange-50 text-orange-600 dark:bg-gray-700 dark:text-orange-400'
+                : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200'
             }`}
           >
-            <item.icon size={20} />
+            <item.icon size={20} className={currentView === item.id ? 'text-orange-500 dark:text-orange-400' : ''} />
             {item.label}
           </button>
         ))}
@@ -52,7 +53,7 @@ const Sidebar = ({ currentView, onNavigate }: SidebarProps) => {
 
       <button 
         onClick={handleLogout}
-        className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-red-500 hover:bg-red-50 transition-colors cursor-pointer mt-auto"
+        className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors cursor-pointer mt-auto"
       >
         <LogOut size={20} />
         Log Out

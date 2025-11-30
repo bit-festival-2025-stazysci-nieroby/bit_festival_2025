@@ -126,8 +126,6 @@ class Command(BaseCommand):
                 "time_end": None
             })
 
-            activity_id = activity_ref.id
-
             # ---------- Likes ----------
             like_users = random.sample(real_users, random.randint(0, len(real_users)))
             for u in like_users:
@@ -153,4 +151,5 @@ class Command(BaseCommand):
                 )
             )
 
-        self.stdout.write(self.style.SUCCESS("Sample data generation complete!"))
+        self.stdout.write(self.style.SUCCESS("Sample activity generation complete!"))
+
